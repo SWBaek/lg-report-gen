@@ -51,7 +51,7 @@ npm run build
 npm run build:win
 ```
 
-선택적 실제 Codex Smoke Test는 `npm run test:integration:codex`로 실행하며 일반 테스트에는 실제 계정 호출이 없습니다. Windows 빌드는 `release/LG-Report-Agent-1.0.2-x64-Portable.exe`와 `release/LG-Report-Agent-Setup-1.0.2-x64.exe`를 생성합니다. 코드 서명이 구성되지 않았으므로 산출물은 unsigned이며 SmartScreen 경고가 나타날 수 있습니다.
+선택적 실제 Codex Smoke Test는 `npm run test:integration:codex`로 실행하며 일반 테스트에는 실제 계정 호출이 없습니다. Windows 빌드는 `release/LG-Report-Agent-1.0.3-x64-Portable.exe`와 `release/LG-Report-Agent-Setup-1.0.3-x64.exe`를 생성합니다. `npm run check:package-size`는 두 산출물이 각각 110 MiB를 넘지 않는지 검사합니다. 코드 서명이 구성되지 않았으므로 산출물은 unsigned이며 SmartScreen 경고가 나타날 수 있습니다.
 
 `v<package.json version>` 형식의 Tag를 Push하면 `.github/workflows/release.yml`이 검사, Electron E2E, Windows 패키징, 패키지 실행 테스트를 수행하고 EXE와 SHA-256 목록을 GitHub Release에 게시합니다.
 
@@ -73,7 +73,7 @@ npm run build:win
 - PPTX는 슬라이드 텍스트와 표 XML 및 노트 존재를 추출하지만 시각 레이아웃을 재현하지 않습니다.
 - CSV는 UTF-8을 우선하며 비 UTF-8 파일은 UTF-8 재저장을 안내합니다.
 - A4 편집 화면은 CSS 경계를 제공하고 정확한 페이지 나눔은 인쇄 미리보기를 기준으로 합니다.
-- HTML 내보내기는 Pretendard Variable WOFF2를 포함해 파일 크기가 증가합니다.
+- HTML 내보내기는 UI와 동일한 단일 Pretendard Variable WOFF2를 포함하므로 내보낸 문서의 크기가 약 2 MB 증가합니다.
 - 코드 서명과 공식 LG 템플릿/CI 자산은 포함하지 않습니다.
 
 ## 보안 경계

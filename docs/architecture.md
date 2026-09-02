@@ -8,4 +8,8 @@ Renderer는 Feature별 보고서, Chat, Settings와 공용 Sidebar로 나뉜다.
 
 HTML Export는 정화된 Canonical Fragment와 별도 `report-theme` 모듈을 조합한다. 이 Theme는 화면용 종이 Layout, 제목·표·인용·근거 표기 스타일, A4 Print CSS, Data URI Pretendard를 포함하며 JavaScript나 외부 Resource를 사용하지 않는다.
 
-의존성 선택: electron-vite 5의 Stable peer 범위 때문에 Vite 7을 사용한다. Electron은 공개 보안 advisory가 수정되고 better-sqlite3의 공식 Windows prebuilt ABI와 호환되는 최신 Stable 조합인 42.11.1 / 12.11.1을 사용한다. 설치 스크립트는 Node 테스트용과 Electron 런타임용 native binary를 분리한다. `@fontsource/pretendard`가 한국어 글리프를 제공하지 않아 공식 `pretendard` npm 배포의 Variable WOFF2와 라이선스를 패키징한다.
+## 배포 용량 경계
+
+Renderer와 순수 JavaScript Main 의존성은 Vite가 번들링하고, Electron에서 직접 로드해야 하는 `better-sqlite3`와 PDF.js의 Canvas 네이티브 모듈만 Production Dependency로 외부화한다. UI와 HTML Export는 Renderer Bundle에 포함된 단일 Pretendard Variable WOFF2를 공유한다. Windows Package에는 `ko`, `en-US` Electron Locale만 포함하며, SQLite Source와 Node용 중복 Binary는 제외한다. `check:package-size`는 Portable과 Setup 각각에 110 MiB 상한을 적용해 의존성 중복 회귀를 감지한다.
+
+의존성 선택: electron-vite 5의 Stable peer 범위 때문에 Vite 7을 사용한다. Electron은 공개 보안 advisory가 수정되고 better-sqlite3의 공식 Windows prebuilt ABI와 호환되는 최신 Stable 조합인 42.11.1 / 12.11.1을 사용한다. 설치 스크립트는 Node 테스트용과 Electron 런타임용 native binary를 분리한다. 공식 `pretendard` npm 배포의 Variable WOFF2 한 파일을 UI와 HTML Export가 공유하며 SIL Open Font License 1.1 전문도 Package에 포함한다.

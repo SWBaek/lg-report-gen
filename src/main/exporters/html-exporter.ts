@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
 import type { Report } from '../../shared/types/index.js';
@@ -6,28 +6,7 @@ import { atomicWrite, safeFilename, sanitizeReportHtml } from '../services/files
 import { buildReportDocument } from './report-theme.js';
 
 export async function exportReportHtml(report: Report, targetDirectory: string): Promise<string> {
-  const fontPath = app.isPackaged
-    ? path.join(
-        process.resourcesPath,
-        'app.asar.unpacked',
-        'node_modules',
-        'pretendard',
-        'dist',
-        'web',
-        'variable',
-        'woff2',
-        'PretendardVariable.woff2',
-      )
-    : path.join(
-        app.getAppPath(),
-        'node_modules',
-        'pretendard',
-        'dist',
-        'web',
-        'variable',
-        'woff2',
-        'PretendardVariable.woff2',
-      );
+  const fontPath = await resolvePretendardPath();
   const font = await readFile(fontPath);
   const base = safeFilename(report.title);
   let target = path.join(targetDirectory, `${base}.html`);
@@ -52,6 +31,26 @@ export async function exportReportHtml(report: Report, targetDirectory: string):
   });
   await atomicWrite(target, document);
   return target;
+}
+
+async function resolvePretendardPath(): Promise<string> {
+  if (!app.isPackaged)
+    return path.join(
+      app.getAppPath(),
+      'node_modules',
+      'pretendard',
+      'dist',
+      'web',
+      'variable',
+      'woff2',
+      'PretendardVariable.woff2',
+    );
+  const assets = path.join(app.getAppPath(), 'out', 'renderer', 'assets');
+  const bundledFont = (await readdir(assets)).find((name) =>
+    /^PretendardVariable(?:-[A-Za-z0-9_-]+)?\.woff2$/.test(name),
+  );
+  if (!bundledFont) throw new Error('REPORT_EXPORT_FONT_MISSING');
+  return path.join(assets, bundledFont);
 }
 async function embedLocalImages(html: string, reportDir: string): Promise<string> {
   const matches = [...html.matchAll(/<img([^>]*?)src="([^"]+)"([^>]*)>/gi)];
