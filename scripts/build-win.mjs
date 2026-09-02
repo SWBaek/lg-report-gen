@@ -18,7 +18,15 @@ const executable = path.join(
 await mkdir(staging, { recursive: true });
 const result = spawn.sync(
   executable,
-  ['--win', 'portable', 'nsis', '--x64', `--config.directories.output=${staging}`],
+  [
+    '--win',
+    'portable',
+    'nsis',
+    '--x64',
+    '--publish',
+    'never',
+    `--config.directories.output=${staging}`,
+  ],
   { cwd: root, shell: false, stdio: 'inherit' },
 );
 if (result.status !== 0) throw new Error('Windows 패키징에 실패했습니다.');
