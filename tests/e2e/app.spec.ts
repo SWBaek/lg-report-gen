@@ -2,14 +2,12 @@ import {
   test,
   expect,
   _electron as electron,
-  chromium,
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 let root: string;
 let workspace: string;
@@ -115,10 +113,12 @@ test('first run, local report workflow, restart, chat, and export', async () => 
   expect(html).toContain('class="report-sheet"');
   expect(html).toContain('--report-accent: #a50034');
   expect(html).toContain('thead th');
-  const previewBrowser = await chromium.launch({ headless: true });
+  const previewApplication = await electron.launch({
+    args: [path.resolve('tests/fixtures/export-preview.cjs'), exportPath],
+  });
   try {
-    const previewPage = await previewBrowser.newPage({ viewport: { width: 1180, height: 900 } });
-    await previewPage.goto(pathToFileURL(exportPath).href);
+    const previewPage = await previewApplication.firstWindow();
+    await previewPage.setViewportSize({ width: 1180, height: 900 });
     await expect(previewPage.locator('.report-sheet')).toBeVisible();
     await previewPage.locator('.report-content').evaluate((element) => {
       if (element.querySelector('thead')) return;
@@ -136,7 +136,7 @@ test('first run, local report workflow, restart, chat, and export', async () => 
       fullPage: true,
     });
   } finally {
-    await previewBrowser.close();
+    await previewApplication.close();
   }
   await app.close();
   await launch();
