@@ -1,0 +1,52 @@
+:root {
+  --font: Pretendard, sans-serif;
+  --primary: #a50034;
+  --primary-hover: #87002b;
+  --primary-soft: #f9eaf0;
+  --bg: #f7f5f4;
+  --surface: #fff;
+  --surface-alt: #f1eeee;
+  --text: #282326;
+  --text-muted: #70696c;
+  --border: #d8d2d4;
+  --danger: #b42318;
+  --warning: #9a6700;
+  --success: #067647;
+  --focus: #2563eb;
+  --sidebar: 268px;
+  --radius: 6px;
+  --space: 8px;
+  --shadow: 0 2px 12px rgba(45, 32, 37, 0.08);
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  font-size: 14px;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
