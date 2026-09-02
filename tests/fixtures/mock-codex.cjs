@@ -87,7 +87,7 @@ rl.on('line', (line) => {
       : properties.htmlBody
         ? JSON.stringify({
             title: 'E2E 검증 보고서',
-            htmlBody: `<h1>E2E 검증 보고서</h1><p>안전하게 생성된 본문</p><p>${params.model} · ${params.effort}</p>`,
+            htmlBody: `<h1>E2E 검증 보고서</h1><blockquote><p>안전하게 생성된 본문</p></blockquote><h2>검증 결과</h2><p>선택한 AI 설정과 주요 결과를 요약합니다.</p><table><thead><tr><th>항목</th><th>결과</th></tr></thead><tbody><tr><td>모델 및 Reasoning</td><td>${params.model} · ${params.effort}</td></tr><tr><td>HTML 안전성</td><td>통과</td></tr></tbody></table><h3>후속 조치</h3><ul><li>내보낸 문서의 화면 및 인쇄 레이아웃을 확인합니다.</li><li>근거가 부족한 항목은 확인 필요로 표시합니다.</li></ul>`,
             executiveSummary: '안전하게 생성된 본문',
             sourceUsage: [],
             assumptions: [],

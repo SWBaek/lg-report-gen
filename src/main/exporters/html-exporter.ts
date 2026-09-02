@@ -3,6 +3,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import type { Report } from '../../shared/types/index.js';
 import { atomicWrite, safeFilename, sanitizeReportHtml } from '../services/files.js';
+import { buildReportDocument } from './report-theme.js';
 
 export async function exportReportHtml(report: Report, targetDirectory: string): Promise<string> {
   const fontPath = app.isPackaged
@@ -43,7 +44,12 @@ export async function exportReportHtml(report: Report, targetDirectory: string):
     path.dirname(report.contentPath),
   );
   const a4 = report.layoutMode === 'a4';
-  const document = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeText(report.title)}</title><style>@font-face{font-family:Pretendard;src:url(data:font/woff2;base64,${font.toString('base64')}) format('woff2');font-weight:45 920}*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#252124;font-family:Pretendard,sans-serif;line-height:1.65}main{${a4 ? 'width:210mm;min-height:297mm;padding:20mm;margin:0 auto;' : 'max-width:960px;padding:48px;margin:0 auto;'}}h1,h2,h3,h4{line-height:1.3;break-after:avoid}h1{color:#8d002d;border-bottom:2px solid #a50034;padding-bottom:12px}table{width:100%;border-collapse:collapse;break-inside:avoid}th,td{border:1px solid #cfc9ca;padding:8px;text-align:left}th{background:#f4f0f1}img{max-width:100%}.page-break{break-before:page}@page{size:${a4 ? 'A4 portrait' : 'auto'};margin:${a4 ? '20mm' : '12mm'}}@media print{main{width:auto;max-width:none;padding:0;margin:0}}</style></head><body><main>${body}</main></body></html>`;
+  const document = buildReportDocument({
+    title: report.title,
+    body,
+    fontBase64: font.toString('base64'),
+    a4,
+  });
   await atomicWrite(target, document);
   return target;
 }
@@ -74,11 +80,4 @@ async function embedLocalImages(html: string, reportDir: string): Promise<string
     }
   }
   return result;
-}
-function escapeText(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

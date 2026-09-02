@@ -2,12 +2,14 @@ import {
   test,
   expect,
   _electron as electron,
+  chromium,
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 let root: string;
 let workspace: string;
@@ -103,15 +105,39 @@ test('first run, local report workflow, restart, chat, and export', async () => 
   const exports = path.join(workspace, 'exports');
   const files = await import('node:fs/promises').then((fs) => fs.readdir(exports));
   expect(files.some((name) => name.endsWith('.html'))).toBe(true);
-  const html = await readFile(
-    path.join(
-      exports,
-      files.find((name) => name.endsWith('.html'))!,
-    ),
-    'utf8',
+  const exportPath = path.join(
+    exports,
+    files.find((name) => name.endsWith('.html'))!,
   );
+  const html = await readFile(exportPath, 'utf8');
   expect(html).not.toMatch(/<script|onclick=/i);
   expect(html).toContain('@page');
+  expect(html).toContain('class="report-sheet"');
+  expect(html).toContain('--report-accent: #a50034');
+  expect(html).toContain('thead th');
+  const previewBrowser = await chromium.launch({ headless: true });
+  try {
+    const previewPage = await previewBrowser.newPage({ viewport: { width: 1180, height: 900 } });
+    await previewPage.goto(pathToFileURL(exportPath).href);
+    await expect(previewPage.locator('.report-sheet')).toBeVisible();
+    await previewPage.locator('.report-content').evaluate((element) => {
+      if (element.querySelector('thead')) return;
+      element.insertAdjacentHTML(
+        'beforeend',
+        '<h2>검증 결과</h2><blockquote><p>핵심 결론을 우선 표시합니다.</p></blockquote><table><thead><tr><th>항목</th><th>결과</th></tr></thead><tbody><tr><td>화면 레이아웃</td><td>통과</td></tr><tr><td>인쇄 스타일</td><td>통과</td></tr></tbody></table><h3>후속 조치</h3><ul><li>보고서 내용을 검토합니다.</li><li>HTML 파일을 오프라인으로 보관합니다.</li></ul>',
+      );
+    });
+    await expect(previewPage.locator('thead th').first()).toHaveCSS(
+      'background-color',
+      'rgb(121, 0, 39)',
+    );
+    await previewPage.screenshot({
+      path: 'artifacts/screenshots/07-export-html.png',
+      fullPage: true,
+    });
+  } finally {
+    await previewBrowser.close();
+  }
   await app.close();
   await launch();
   await page.getByRole('button', { name: 'E2E 검증 보고서', exact: true }).click();
