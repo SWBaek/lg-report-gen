@@ -2,6 +2,7 @@ import { clipboard, dialog, ipcMain, shell } from 'electron';
 import { IPC, IPC_ALLOWLIST } from '../../shared/constants/ipc.js';
 import {
   chatCreateSchema,
+  chatAiSettingsSchema,
   codexTurnSchema,
   createReportSchema,
   externalUrlSchema,
@@ -167,6 +168,12 @@ export function registerIpc(context: ApplicationContext): void {
   handle(IPC.chatRename, (input) => {
     const value = renameSchema.parse(input);
     context.requireDatabase().renameChat(value.id, value.title);
+  });
+  handle(IPC.chatAiSettings, (input) => {
+    const value = chatAiSettingsSchema.parse(input);
+    return context
+      .requireDatabase()
+      .updateChatAiSettings(value.id, value.model, value.reasoningEffort);
   });
   handle(IPC.chatDelete, (input) =>
     context.requireDatabase().deleteChat(reportIdSchema.parse(input).id),

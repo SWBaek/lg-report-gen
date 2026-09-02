@@ -76,9 +76,9 @@ test('first run, local report workflow, restart, chat, and export', async () => 
     .getByPlaceholder('보고 대상, 배경, 필요한 결정이나 결과를 적으세요')
     .fill('로컬 저장과 HTML 내보내기를 검증한다.');
   await page.getByRole('button', { name: '다음' }).click();
-  await page.getByText('고급 설정', { exact: true }).click();
-  await page.getByLabel('모델').selectOption('alternate-model');
-  await expect(page.getByLabel('Reasoning Effort')).toHaveValue('high');
+  await expect(page.getByText('AI 모델 설정', { exact: true })).toBeVisible();
+  await page.getByLabel('모델', { exact: true }).selectOption('alternate-model');
+  await expect(page.getByLabel('Reasoning Effort', { exact: true })).toHaveValue('high');
   await page.getByRole('button', { name: '다음' }).click();
   await page.getByRole('button', { name: '다음' }).click();
   await page.getByText('즉시 생성').click();
@@ -117,6 +117,9 @@ test('first run, local report workflow, restart, chat, and export', async () => 
   await page.getByRole('button', { name: 'E2E 검증 보고서', exact: true }).click();
   await expect(page.getByLabel('보고서 편집기')).toContainText('수동 편집 내용');
   await page.getByRole('button', { name: '새 Chat' }).click();
+  await expect(page.getByLabel('Chat 모델')).toBeVisible();
+  await page.getByLabel('Chat 모델').selectOption('alternate-model');
+  await expect(page.getByLabel('Chat Reasoning Effort')).toHaveValue('high');
   await page.getByLabel('Chat 메시지').fill('짧게 답해줘');
   await page.getByRole('button', { name: '전송' }).click();
   await expect(page.getByText('안전한 응답')).toBeVisible({ timeout: 10_000 });

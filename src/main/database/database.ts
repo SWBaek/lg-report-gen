@@ -103,6 +103,13 @@ export class AppDatabase {
     `);
         db.pragma('user_version = 1');
       })();
+    if (version < 2)
+      db.transaction(() => {
+        db.exec(
+          'ALTER TABLE chat_sessions ADD COLUMN model TEXT; ALTER TABLE chat_sessions ADD COLUMN reasoning_effort TEXT;',
+        );
+        db.pragma('user_version = 2');
+      })();
   }
   private seedPersonas(): void {
     const db = this.connection;
@@ -406,6 +413,19 @@ export class AppDatabase {
       .prepare('UPDATE chat_sessions SET title=?,updated_at=? WHERE id=?')
       .run(title, now(), id);
   }
+  updateChatAiSettings(
+    id: string,
+    model: string | null,
+    reasoningEffort: string | null,
+  ): ChatSession {
+    this.connection
+      .prepare('UPDATE chat_sessions SET model=?,reasoning_effort=?,updated_at=? WHERE id=?')
+      .run(model, reasoningEffort, now(), id);
+    const row = this.connection.prepare('SELECT * FROM chat_sessions WHERE id=?').get(id) as
+      Record<string, unknown> | undefined;
+    if (!row) throw new Error('CHAT_NOT_FOUND');
+    return rowToChat(row);
+  }
   deleteChat(id: string): void {
     this.connection
       .prepare('UPDATE chat_sessions SET deleted_at=?,updated_at=? WHERE id=?')
@@ -518,6 +538,8 @@ function rowToChat(row: Record<string, unknown>): ChatSession {
     kind: row.kind as 'general' | 'report',
     reportId: row.report_id ? String(row.report_id) : null,
     codexThreadId: row.codex_thread_id ? String(row.codex_thread_id) : null,
+    model: row.model ? String(row.model) : null,
+    reasoningEffort: row.reasoning_effort ? String(row.reasoning_effort) : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     deletedAt: row.deleted_at ? String(row.deleted_at) : null,

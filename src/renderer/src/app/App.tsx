@@ -136,6 +136,7 @@ export function App() {
           <ChatView
             session={chat}
             reports={state.reports}
+            provider={state.provider}
             onDeleted={async () => {
               await reload();
               setView('home');

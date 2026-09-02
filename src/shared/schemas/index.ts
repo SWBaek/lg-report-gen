@@ -58,6 +58,11 @@ export const chatCreateSchema = z.object({
   title: z.string().trim().min(1).max(200).default('새 대화'),
   reportId: idSchema.nullable().default(null),
 });
+export const chatAiSettingsSchema = z.object({
+  id: idSchema,
+  model: z.string().min(1).max(200).nullable(),
+  reasoningEffort: z.string().min(1).max(50).nullable(),
+});
 export const messageListSchema = z.object({ sessionId: idSchema });
 export const codexTurnSchema = z.object({
   sessionType: z.enum(['chat', 'report', 'planning', 'generation', 'revision']),

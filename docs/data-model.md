@@ -8,7 +8,7 @@ SQLite는 UTC ISO timestamp, UUID, foreign keys, WAL, transaction을 사용한�
 - `report_revisions`: 파일 snapshot, 이유, 설명, base hash
 - `report_sources`: 원본/추출 경로, MIME, size, SHA-256, 상태, metadata, warning
 - `tags`, `report_tags`: 다대다 Tag
-- `chat_sessions`, `chat_messages`: 일반/보고서 AI session과 앱 표시 기록
+- `chat_sessions`, `chat_messages`: 일반/보고서 AI session과 앱 표시 기록. 일반 Chat의 선택 모델과 Reasoning Effort는 session별로 저장한다.
 - `ai_tasks`: 작업 종류, 상태, 안전한 오류 metadata
 
 대용량 원본과 보고서 Snapshot은 파일에 두고 DB에는 관계와 경로를 둔다. 영구 삭제는 DB cascade 이후 해당 UUID 디렉터리만 제거한다.

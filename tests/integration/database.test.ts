@@ -85,11 +85,16 @@ describe('SQLite repositories', () => {
   it('persists chats and messages separately from Codex threads', async () => {
     const db = await database();
     const chat = await db.createChat('대화', null);
+    expect(chat.model).toBeNull();
+    const configured = db.updateChatAiSettings(chat.id, 'dynamic-model', 'high');
+    expect(configured.model).toBe('dynamic-model');
+    expect(configured.reasoningEffort).toBe('high');
     db.addMessage(chat.id, 'user', '질문', 'complete');
     db.addMessage(chat.id, 'assistant', '응답', 'complete');
     expect(db.listMessages(chat.id).map((m) => m.content)).toEqual(['질문', '응답']);
     db.renameChat(chat.id, '변경');
     expect(db.listChats()[0]?.title).toBe('변경');
+    expect(db.listChats()[0]?.model).toBe('dynamic-model');
     db.deleteChat(chat.id);
     expect(db.listChats()).toHaveLength(0);
     db.close();

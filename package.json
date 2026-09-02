@@ -1,6 +1,6 @@
 {
   "name": "lg-report-agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "LG전자 내부 사용자를 위한 로컬 우선 보고서 작성 데스크톱 애플리케이션",
   "private": true,
   "main": "./out/main/index.js",

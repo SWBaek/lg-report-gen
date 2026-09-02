@@ -11,6 +11,11 @@ import { planningOutputSchema, reportOutputSchema } from '../../../../shared/sch
 import { parseStructuredOutput } from '../../../../shared/schemas/structured-output';
 import DOMPurify from 'dompurify';
 import { useAiTask } from '../../hooks/useAiTask';
+import {
+  initialModelReasoning,
+  ModelReasoningSettings,
+  reasoningLabel,
+} from '../../components/ModelReasoningSettings';
 
 interface OutlineItem {
   id: string;
@@ -323,44 +328,20 @@ export function NewReportWizard({
                   결론 우선
                 </label>
               </div>
-              <details className="advanced-settings">
-                <summary>고급 설정</summary>
-                {provider.availableModels.length > 0 ? (
-                  <div className="grid advanced-grid">
-                    <Option
-                      label="모델"
-                      value={options.model ?? ''}
-                      values={provider.availableModels.map((model) => [
-                        model.id,
-                        `${model.displayName}${model.isDefault ? ' · 기본' : ''}`,
-                      ])}
-                      onChange={(modelId) => {
-                        const model = provider.availableModels.find((item) => item.id === modelId);
-                        setOptions({
-                          ...options,
-                          model: modelId,
-                          reasoningEffort: preferredEffort(model),
-                        });
-                      }}
-                    />
-                    <Option
-                      label="Reasoning Effort"
-                      value={options.reasoningEffort ?? ''}
-                      values={(selectedModel?.reasoningEfforts ?? []).map((effort) => [
-                        effort,
-                        reasoningLabel(effort),
-                      ])}
-                      disabled={!selectedModel?.reasoningEfforts.length}
-                      emptyLabel="지원 정보 없음"
-                      onChange={(reasoningEffort) => setOptions({ ...options, reasoningEffort })}
-                    />
-                  </div>
-                ) : (
-                  <div className="notice">
-                    사용할 수 있는 모델 정보가 없습니다. 설정에서 Codex 상태를 새로고침하십시오.
-                  </div>
-                )}
-              </details>
+              <section className="advanced-settings" aria-labelledby="report-ai-settings-title">
+                <div className="section-heading" id="report-ai-settings-title">
+                  <strong>AI 모델 설정</strong>
+                  <span className="muted">이 보고서의 계획과 본문 생성에 적용됩니다.</span>
+                </div>
+                <ModelReasoningSettings
+                  provider={provider}
+                  value={{ model: options.model, reasoningEffort: options.reasoningEffort }}
+                  onChange={(value) => setOptions({ ...options, ...value })}
+                  onRefresh={async () => {
+                    await window.lgReportAgent.codex.refresh();
+                  }}
+                />
+              </section>
             </>
           )}
           {step === 3 && (
@@ -597,34 +578,11 @@ function initialOptions(
   provider: ProviderSnapshot,
   base: ReportOutputOptions = DEFAULT_OPTIONS,
 ): ReportOutputOptions {
-  const model =
-    provider.availableModels.find((item) => item.id === provider.selectedModel) ??
-    provider.availableModels.find((item) => item.isDefault) ??
-    provider.availableModels[0];
+  const ai = initialModelReasoning(provider, base);
   return {
     ...base,
-    model: model?.id ?? null,
-    reasoningEffort: preferredEffort(model),
+    ...ai,
   };
-}
-function preferredEffort(
-  model: ProviderSnapshot['availableModels'][number] | undefined,
-): string | null {
-  if (!model) return null;
-  if (model.defaultReasoningEffort && model.reasoningEfforts.includes(model.defaultReasoningEffort))
-    return model.defaultReasoningEffort;
-  return model.reasoningEfforts[0] ?? null;
-}
-function reasoningLabel(value: string): string {
-  const labels: Record<string, string> = {
-    minimal: '최소',
-    low: '낮음',
-    medium: '중간',
-    high: '높음',
-    xhigh: '매우 높음',
-    ultra: '최고',
-  };
-  return labels[value] ?? (value || '모델 기본값');
 }
 function formatCharacters(value: number): string {
   return value > 0 ? `${value.toLocaleString()}자` : '대기 중';

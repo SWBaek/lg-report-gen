@@ -54,6 +54,11 @@ export interface DesktopApi {
     list(): Promise<ChatSession[]>;
     create(title?: string, reportId?: string | null): Promise<ChatSession>;
     rename(id: string, title: string): Promise<void>;
+    updateAiSettings(
+      id: string,
+      model: string | null,
+      reasoningEffort: string | null,
+    ): Promise<ChatSession>;
     delete(id: string): Promise<void>;
     messages(sessionId: string): Promise<ChatMessage[]>;
   };

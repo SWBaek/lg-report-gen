@@ -45,6 +45,8 @@ const api: DesktopApi = {
     list: () => invoke(IPC.chatsList),
     create: (title = '새 대화', reportId = null) => invoke(IPC.chatCreate, { title, reportId }),
     rename: (id, title) => invoke(IPC.chatRename, { id, title }),
+    updateAiSettings: (id, model, reasoningEffort) =>
+      invoke(IPC.chatAiSettings, { id, model, reasoningEffort }),
     delete: (id) => invoke(IPC.chatDelete, { id }),
     messages: (sessionId) => invoke(IPC.messagesList, { sessionId }),
   },

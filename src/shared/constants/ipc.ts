@@ -25,6 +25,7 @@ export const IPC = {
   chatsList: 'chats:list',
   chatCreate: 'chat:create',
   chatRename: 'chat:rename',
+  chatAiSettings: 'chat:ai-settings',
   chatDelete: 'chat:delete',
   messagesList: 'messages:list',
   codexRefresh: 'codex:refresh',

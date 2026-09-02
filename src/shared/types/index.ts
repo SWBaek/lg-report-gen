@@ -97,6 +97,8 @@ export interface ChatSession {
   kind: 'general' | 'report';
   reportId: string | null;
   codexThreadId: string | null;
+  model: string | null;
+  reasoningEffort: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
