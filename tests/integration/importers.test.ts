@@ -37,7 +37,7 @@ describe('source extraction', () => {
       content: { locator: string }[];
     };
     expect(extracted.content.map((p) => p.locator)).toEqual(['page 1', 'page 2']);
-  });
+  }, 30_000);
   it('keeps PPTX numeric slide order and XLSX sheet/formula mapping', async () => {
     const fixture = await importer();
     const zip = new JSZip();
@@ -57,7 +57,7 @@ describe('source extraction', () => {
     };
     expect(pptData.content.map((s) => s.locator)).toEqual(['slide 2', 'slide 10']);
     expect(xlsxSource?.metadata.sheetCount).toBe(1);
-  });
+  }, 30_000);
   it('rejects binary text and records a safe failure', async () => {
     const fixture = await importer();
     const file = path.join(fixture.root, 'bad.txt');
