@@ -23,6 +23,10 @@ export function useAiTask() {
           setStream(streamRef.current);
         }
         if (event.type === 'complete') {
+          if (event.text !== undefined) {
+            streamRef.current = event.text;
+            setStream(event.text);
+          }
           setRunning(false);
           resolver.current?.(streamRef.current);
           cleanup();

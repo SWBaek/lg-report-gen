@@ -11,6 +11,7 @@ export const reportOutputOptionsSchema = z.object({
   conclusionFirst: z.boolean().default(true),
   terminology: z.enum(['minimal', 'standard', 'expert']).default('standard'),
   evidence: z.enum(['minimal', 'standard', 'detailed']).default('standard'),
+  model: z.string().nullable().default(null),
   reasoningEffort: z.string().nullable().default(null),
 });
 export const createReportSchema = z.object({

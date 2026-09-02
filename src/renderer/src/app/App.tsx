@@ -25,6 +25,14 @@ export function App() {
   useEffect(() => {
     void reload();
   }, []);
+  useEffect(
+    () =>
+      window.lgReportAgent.codex.onEvent((event) => {
+        if (event.type === 'state' && event.snapshot)
+          setState((current) => (current ? { ...current, provider: event.snapshot! } : current));
+      }),
+    [],
+  );
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key.toLowerCase() === 'n') {
@@ -149,6 +157,7 @@ export function App() {
       {wizard && (
         <NewReportWizard
           personas={state.personas}
+          provider={state.provider}
           {...(prefill !== undefined ? { prefill } : {})}
           onClose={() => setWizard(false)}
           onCreated={async (created) => {

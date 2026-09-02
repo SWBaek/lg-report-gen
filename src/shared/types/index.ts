@@ -18,6 +18,7 @@ export interface ModelInfo {
   id: string;
   displayName: string;
   isDefault: boolean;
+  defaultReasoningEffort: string | null;
   reasoningEfforts: string[];
   supportsImages: boolean;
 }

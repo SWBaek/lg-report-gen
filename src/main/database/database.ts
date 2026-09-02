@@ -13,6 +13,7 @@ import type {
   Revision,
   SourceManifestEntry,
 } from '../../shared/types/index.js';
+import { reportOutputOptionsSchema } from '../../shared/schemas/index.js';
 import { atomicWrite, contentHash, sanitizeReportHtml } from '../services/files.js';
 import type { WorkspacePaths } from '../workspace/manager.js';
 import { backupDatabase } from '../workspace/manager.js';
@@ -35,6 +36,7 @@ const DEFAULT_OPTIONS: ReportOutputOptions = {
   conclusionFirst: true,
   terminology: 'standard',
   evidence: 'standard',
+  model: null,
   reasoningEffort: null,
 };
 const BUILT_INS = [
@@ -490,7 +492,7 @@ function rowToReport(row: Record<string, unknown>): Omit<Report, 'html' | 'edito
     ...rowToSummary(row),
     personaId: row.persona_id ? String(row.persona_id) : null,
     personaConfig: String(row.persona_config ?? '{}'),
-    outputOptions: JSON.parse(String(row.output_options)) as ReportOutputOptions,
+    outputOptions: reportOutputOptionsSchema.parse(JSON.parse(String(row.output_options))),
     contentPath: String(row.content_path),
     editorStatePath: String(row.editor_state_path),
     currentRevisionId: row.current_revision_id ? String(row.current_revision_id) : null,

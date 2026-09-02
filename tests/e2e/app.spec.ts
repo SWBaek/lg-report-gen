@@ -76,12 +76,20 @@ test('first run, local report workflow, restart, chat, and export', async () => 
     .getByPlaceholder('보고 대상, 배경, 필요한 결정이나 결과를 적으세요')
     .fill('로컬 저장과 HTML 내보내기를 검증한다.');
   await page.getByRole('button', { name: '다음' }).click();
+  await page.getByText('고급 설정', { exact: true }).click();
+  await page.getByLabel('모델').selectOption('alternate-model');
+  await expect(page.getByLabel('Reasoning Effort')).toHaveValue('high');
   await page.getByRole('button', { name: '다음' }).click();
   await page.getByRole('button', { name: '다음' }).click();
-  await page.getByText('빈 Report 생성').click();
+  await page.getByText('즉시 생성').click();
   await page.getByRole('button', { name: '다음' }).click();
+  await expect(page.getByText(/Alternate model · Reasoning 높음/)).toBeVisible();
   await page.getByRole('button', { name: '생성 시작' }).click();
+  await expect(page.getByText('보고서를 생성하고 있습니다…')).toBeVisible();
+  await expect(page.getByText(/"htmlBody"/)).toHaveCount(0);
   await expect(page.getByLabel('보고서 편집기')).toBeVisible();
+  await expect(page.getByLabel('보고서 편집기')).toContainText('안전하게 생성된 본문');
+  await expect(page.getByLabel('보고서 편집기')).toContainText('alternate-model · high');
   await page.getByLabel('보고서 편집기').click();
   await page.keyboard.press('Control+End');
   await page.keyboard.type(' 수동 편집 내용');

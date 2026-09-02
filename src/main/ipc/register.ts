@@ -201,6 +201,7 @@ export function registerIpc(context: ApplicationContext): void {
     if ((event.type === 'complete' || event.type === 'error') && event.taskId) {
       const stream = streams.get(event.taskId);
       if (stream) {
+        if (event.type === 'complete' && event.text !== undefined) stream.text = event.text;
         context.database?.addMessage(
           stream.sessionId,
           'assistant',

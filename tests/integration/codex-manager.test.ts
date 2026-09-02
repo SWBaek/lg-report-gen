@@ -29,6 +29,8 @@ describe('Codex JSON-RPC broker', () => {
       expect(snapshot.state).toBe('ready');
       expect(snapshot.maskedAccount).toBe('us***@example.com');
       expect(snapshot.selectedModel).toBe('dynamic-model');
+      expect(snapshot.availableModels[0]?.defaultReasoningEffort).toBe('medium');
+      expect(snapshot.availableModels[0]?.reasoningEfforts).toEqual(['low', 'medium', 'high']);
       const events: CodexEvent[] = [];
       manager.on('event', (event: CodexEvent) => events.push(event));
       const done = new Promise<void>((resolve) =>
@@ -57,6 +59,7 @@ describe('Codex JSON-RPC broker', () => {
           .map((e) => e.text)
           .join(''),
       ).toBe('안전한 응답');
+      expect(events.find((event) => event.type === 'complete')?.text).toBe('안전한 응답');
     },
   );
 });

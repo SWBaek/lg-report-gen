@@ -1,0 +1,83 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $version."
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run source checks
+        run: npm run check
+
+      - name: Run Electron workflow tests
+        run: npm run test:e2e
+
+      - name: Build Windows packages
+        run: npm run build:win
+
+      - name: Test packaged application
+        shell: pwsh
+        run: |
+          $env:PACKAGED_APP_PATH = (Get-Content -LiteralPath 'artifacts/latest-packaged-path.txt' -Raw).Trim()
+          npm run test:e2e:packaged
+
+      - name: Create SHA-256 checksums
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem -LiteralPath release -Filter '*.exe' |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+          $lines | Set-Content -LiteralPath 'release/SHA256SUMS.txt' -Encoding utf8NoBOM
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $assets = @(Get-ChildItem -LiteralPath release -Filter '*.exe' | ForEach-Object FullName)
+          $assets += (Resolve-Path 'release/SHA256SUMS.txt').Path
+          $notes = @"
+          Windows 10/11 x64용 LG Report Agent입니다.
+
+          - 일반 사용자는 Setup EXE를 권장합니다.
+          - Portable EXE는 설치 없이 실행할 수 있습니다.
+          - Codex CLI는 별도로 설치하고 로그인해야 합니다.
+          - 현재 빌드는 코드 서명되지 않아 Windows SmartScreen 경고가 표시될 수 있습니다.
+          - 공식 LG 템플릿·로고·CI 자산은 포함하지 않습니다.
+          "@
+          gh release create $tag @assets --verify-tag --title "LG Report Agent $tag" --generate-notes --notes $notes

@@ -8,6 +8,10 @@ import {
   reportOutputSchema,
   revisionOutputSchema,
 } from '../../src/shared/schemas/index.js';
+import {
+  parseStructuredOutput,
+  StructuredOutputError,
+} from '../../src/shared/schemas/structured-output.js';
 
 const options = {
   tone: 'standard',
@@ -18,6 +22,7 @@ const options = {
   conclusionFirst: true,
   terminology: 'standard',
   evidence: 'standard',
+  model: null,
   reasoningEffort: null,
 } as const;
 describe('prompt builders and structured output', () => {
@@ -72,5 +77,22 @@ describe('prompt builders and structured output', () => {
       }).success,
     ).toBe(true);
     expect(planningOutputSchema.safeParse({ outline: 'invalid' }).success).toBe(false);
+  });
+  it('extracts the final schema-valid JSON without exposing adjacent commentary', () => {
+    const final = {
+      title: '보고서',
+      htmlBody: '<p>본문</p>',
+      executiveSummary: '요약',
+      sourceUsage: [],
+      assumptions: [],
+      warnings: [],
+    };
+    const raw = `{"progress":"draft"}\n\`\`\`json\n${JSON.stringify(final)}\n\`\`\`\n완료`;
+    expect(parseStructuredOutput(raw, reportOutputSchema)).toEqual(final);
+  });
+  it('returns a safe structured-output error for malformed content', () => {
+    expect(() => parseStructuredOutput('{"title":', reportOutputSchema)).toThrow(
+      StructuredOutputError,
+    );
   });
 });

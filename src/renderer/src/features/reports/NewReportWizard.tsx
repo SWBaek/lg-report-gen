@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   Persona,
+  ProviderSnapshot,
   Report,
   ReportOutputOptions,
   SourceManifestEntry,
 } from '../../../../shared/types';
 import { buildPlanningPrompt, buildReportGenerationPrompt } from '../../../../shared/prompts';
+import { planningOutputSchema, reportOutputSchema } from '../../../../shared/schemas';
+import { parseStructuredOutput } from '../../../../shared/schemas/structured-output';
 import DOMPurify from 'dompurify';
 import { useAiTask } from '../../hooks/useAiTask';
 
@@ -25,15 +28,18 @@ const DEFAULT_OPTIONS: ReportOutputOptions = {
   conclusionFirst: true,
   terminology: 'standard',
   evidence: 'standard',
+  model: null,
   reasoningEffort: null,
 };
 export function NewReportWizard({
   personas,
+  provider,
   prefill,
   onClose,
   onCreated,
 }: {
   personas: Persona[];
+  provider: ProviderSnapshot;
   prefill?: string;
   onClose: () => void;
   onCreated: (report: Report) => void;
@@ -44,7 +50,7 @@ export function NewReportWizard({
   const [personaId, setPersonaId] = useState(
     personas.find((p) => p.isDefault)?.id ?? personas[0]?.id ?? null,
   );
-  const [options, setOptions] = useState(DEFAULT_OPTIONS);
+  const [options, setOptions] = useState<ReportOutputOptions>(() => initialOptions(provider));
   const [paths, setPaths] = useState<string[]>([]);
   const [sources, setSources] = useState<SourceManifestEntry[]>([]);
   const [method, setMethod] = useState<'plan' | 'immediate' | 'blank'>('plan');
@@ -62,6 +68,13 @@ export function NewReportWizard({
   const [error, setError] = useState<string | null>(null);
   const ai = useAiTask();
   const persona = personas.find((p) => p.id === personaId);
+  const selectedModel = provider.availableModels.find((model) => model.id === options.model);
+  useEffect(() => {
+    setOptions((current) => {
+      if (provider.availableModels.some((model) => model.id === current.model)) return current;
+      return initialOptions(provider, current);
+    });
+  }, [provider.availableModels, provider.selectedModel]);
   const ensureDraft = async () => {
     if (draft) return draft;
     const created = await window.lgReportAgent.reports.create({
@@ -90,9 +103,9 @@ export function NewReportWizard({
       setError(e instanceof Error ? e.message : '처리 중 오류가 발생했습니다.');
     }
   };
-  const generatePlan = async () => {
+  const generatePlan = async (): Promise<OutlineItem[]> => {
     const report = await ensureDraft();
-    if (!chatId) return;
+    if (!chatId) throw new Error('보고서 AI Session을 준비하지 못했습니다.');
     const raw = await ai.run({
       sessionType: 'report',
       sessionId: chatId,
@@ -112,14 +125,16 @@ export function NewReportWizard({
       displayText: '작성 계획 생성',
       cwd: agentDir(report),
       threadId: null,
-      model: null,
+      model: options.model,
       effort: options.reasoningEffort,
       outputSchema: planningSchema,
       writable: true,
     });
-    const parsed = JSON.parse(raw) as { suggestedTitle?: unknown; outline?: unknown };
-    if (typeof parsed.suggestedTitle === 'string' && !title) setTitle(parsed.suggestedTitle);
-    if (Array.isArray(parsed.outline)) setOutline(parsed.outline.filter(isOutline));
+    const parsed = parseStructuredOutput(raw, planningOutputSchema);
+    if (!title) setTitle(parsed.suggestedTitle);
+    const nextOutline = parsed.outline.filter(isOutline);
+    setOutline(nextOutline);
+    return nextOutline;
   };
   const finish = async () => {
     setError(null);
@@ -129,8 +144,9 @@ export function NewReportWizard({
         onCreated(await window.lgReportAgent.reports.get(report.id));
         return;
       }
+      let generationOutline = outline;
       if (method === 'plan' && outline.length === 1 && outline[0]?.heading === '요약 및 결론')
-        await generatePlan();
+        generationOutline = await generatePlan();
       const chats = await window.lgReportAgent.chats.list();
       const chat = chats.find((item) => item.id === chatId);
       const raw = await ai.run({
@@ -140,7 +156,7 @@ export function NewReportWizard({
           request: purpose,
           persona: persona?.instructions ?? '',
           options,
-          outline: JSON.stringify(outline),
+          outline: JSON.stringify(generationOutline),
           sources: JSON.stringify(
             sources.map((s) => ({
               id: s.sourceId,
@@ -153,20 +169,19 @@ export function NewReportWizard({
         displayText: '보고서 본문 생성',
         cwd: agentDir(report),
         threadId: chat?.codexThreadId ?? null,
-        model: null,
+        model: options.model,
         effort: options.reasoningEffort,
         outputSchema: generationSchema,
         writable: true,
       });
-      const parsed = JSON.parse(raw) as { title?: unknown; htmlBody?: unknown };
-      if (typeof parsed.htmlBody !== 'string') throw new Error('AI 본문 형식이 올바르지 않습니다.');
+      const parsed = parseStructuredOutput(raw, reportOutputSchema);
       const safe = DOMPurify.sanitize(parsed.htmlBody, {
         FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
         FORBID_ATTR: ['style'],
       });
       const saved = await window.lgReportAgent.reports.save({
         id: report.id,
-        title: typeof parsed.title === 'string' ? parsed.title : title || report.title,
+        title: parsed.title || title || report.title,
         html: safe,
         editorJson: { type: 'doc', content: [] },
         layoutMode: 'a4',
@@ -308,6 +323,44 @@ export function NewReportWizard({
                   결론 우선
                 </label>
               </div>
+              <details className="advanced-settings">
+                <summary>고급 설정</summary>
+                {provider.availableModels.length > 0 ? (
+                  <div className="grid advanced-grid">
+                    <Option
+                      label="모델"
+                      value={options.model ?? ''}
+                      values={provider.availableModels.map((model) => [
+                        model.id,
+                        `${model.displayName}${model.isDefault ? ' · 기본' : ''}`,
+                      ])}
+                      onChange={(modelId) => {
+                        const model = provider.availableModels.find((item) => item.id === modelId);
+                        setOptions({
+                          ...options,
+                          model: modelId,
+                          reasoningEffort: preferredEffort(model),
+                        });
+                      }}
+                    />
+                    <Option
+                      label="Reasoning Effort"
+                      value={options.reasoningEffort ?? ''}
+                      values={(selectedModel?.reasoningEfforts ?? []).map((effort) => [
+                        effort,
+                        reasoningLabel(effort),
+                      ])}
+                      disabled={!selectedModel?.reasoningEfforts.length}
+                      emptyLabel="지원 정보 없음"
+                      onChange={(reasoningEffort) => setOptions({ ...options, reasoningEffort })}
+                    />
+                  </div>
+                ) : (
+                  <div className="notice">
+                    사용할 수 있는 모델 정보가 없습니다. 설정에서 Codex 상태를 새로고침하십시오.
+                  </div>
+                )}
+              </details>
             </>
           )}
           {step === 3 && (
@@ -357,7 +410,15 @@ export function NewReportWizard({
                   <button
                     className="button"
                     disabled={ai.running}
-                    onClick={() => void generatePlan()}
+                    onClick={() =>
+                      void generatePlan().catch((reason: unknown) =>
+                        setError(
+                          reason instanceof Error
+                            ? reason.message
+                            : '작성 계획을 생성하지 못했습니다.',
+                        ),
+                      )
+                    }
                   >
                     {ai.running ? '계획 생성 중…' : 'AI 작성 계획 생성'}
                   </button>
@@ -443,12 +504,24 @@ export function NewReportWizard({
                     : '빈 보고서'}{' '}
                 · Source {paths.length}개
               </p>
+              {selectedModel && (
+                <p className="muted">
+                  {selectedModel.displayName} · Reasoning{' '}
+                  {reasoningLabel(
+                    options.reasoningEffort ?? selectedModel.defaultReasoningEffort ?? '',
+                  )}
+                </p>
+              )}
               <div className="notice">
                 보고서 생성과 AI 대화 입력은 사용자가 인증한 Codex 계정을 통해 처리될 수 있습니다.
               </div>
               {ai.running && (
                 <div className="message assistant">
-                  {ai.stream || '보고서를 생성하고 있습니다…'}
+                  <strong>보고서를 생성하고 있습니다…</strong>
+                  <span className="muted">
+                    {' '}
+                    구조화된 응답 수신 {formatCharacters(ai.stream.length)}
+                  </span>
                 </div>
               )}
             </>
@@ -490,17 +563,27 @@ function Option({
   label,
   value,
   values,
+  disabled = false,
+  emptyLabel,
   onChange,
 }: {
   label: string;
   value: string;
   values: string[][];
+  disabled?: boolean;
+  emptyLabel?: string;
   onChange: (value: string) => void;
 }) {
   return (
     <div className="field">
       <label>{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        aria-label={label}
+        disabled={disabled}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {values.length === 0 && <option value="">{emptyLabel ?? '선택 항목 없음'}</option>}
         {values.map(([v, l]) => (
           <option key={v} value={v}>
             {l}
@@ -509,6 +592,42 @@ function Option({
       </select>
     </div>
   );
+}
+function initialOptions(
+  provider: ProviderSnapshot,
+  base: ReportOutputOptions = DEFAULT_OPTIONS,
+): ReportOutputOptions {
+  const model =
+    provider.availableModels.find((item) => item.id === provider.selectedModel) ??
+    provider.availableModels.find((item) => item.isDefault) ??
+    provider.availableModels[0];
+  return {
+    ...base,
+    model: model?.id ?? null,
+    reasoningEffort: preferredEffort(model),
+  };
+}
+function preferredEffort(
+  model: ProviderSnapshot['availableModels'][number] | undefined,
+): string | null {
+  if (!model) return null;
+  if (model.defaultReasoningEffort && model.reasoningEfforts.includes(model.defaultReasoningEffort))
+    return model.defaultReasoningEffort;
+  return model.reasoningEfforts[0] ?? null;
+}
+function reasoningLabel(value: string): string {
+  const labels: Record<string, string> = {
+    minimal: '최소',
+    low: '낮음',
+    medium: '중간',
+    high: '높음',
+    xhigh: '매우 높음',
+    ultra: '최고',
+  };
+  return labels[value] ?? (value || '모델 기본값');
+}
+function formatCharacters(value: number): string {
+  return value > 0 ? `${value.toLocaleString()}자` : '대기 중';
 }
 function agentDir(report: Report): string {
   return (

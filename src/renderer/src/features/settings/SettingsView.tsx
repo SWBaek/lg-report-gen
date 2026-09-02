@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { BootstrapState, ProviderSnapshot } from '../../../../shared/types';
 
 const INSTALL =
@@ -15,11 +15,14 @@ export function SettingsView({
   const refresh = async () => {
     setBusy(true);
     try {
-      setProvider(await window.lgReportAgent.codex.refresh());
+      const next = await window.lgReportAgent.codex.refresh();
+      setProvider(next);
+      onChanged({ ...state, provider: next });
     } finally {
       setBusy(false);
     }
   };
+  useEffect(() => setProvider(state.provider), [state.provider]);
   return (
     <div className="settings">
       <h1>설정</h1>
@@ -66,7 +69,10 @@ export function SettingsView({
             className="button"
             onClick={async () => {
               const selected = await window.lgReportAgent.codex.browse();
-              if (selected) setProvider(selected);
+              if (selected) {
+                setProvider(selected);
+                onChanged({ ...state, provider: selected });
+              }
             }}
           >
             직접 선택
@@ -101,6 +107,11 @@ export function SettingsView({
               ?.displayName ?? '동적 조회 전'}
           </div>
         </div>
+        {provider.availableModels.length > 0 && (
+          <div className="notice">
+            보고서별 모델과 Reasoning Effort는 새 보고서의 고급 설정에서 선택합니다.
+          </div>
+        )}
         <div className="setting-row">
           <div>마지막 확인</div>
           <div className="setting-value">

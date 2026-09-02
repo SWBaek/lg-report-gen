@@ -10,6 +10,7 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import { TableCell } from '@tiptap/extension-table-cell';
 import DOMPurify from 'dompurify';
 import { diffWords } from 'diff';
+import type { z } from 'zod';
 import {
   AlignCenter,
   AlignLeft,
@@ -39,6 +40,12 @@ import {
 } from 'lucide-react';
 import type { ChatMessage, ChatSession, Report, Revision } from '../../../../shared/types';
 import { buildReportRevisionPrompt } from '../../../../shared/prompts';
+import {
+  planningOutputSchema,
+  reportOutputSchema,
+  revisionOutputSchema,
+} from '../../../../shared/schemas';
+import { parseStructuredOutput } from '../../../../shared/schemas/structured-output';
 import { useAiTask } from '../../hooks/useAiTask';
 
 interface Props {
@@ -185,7 +192,7 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
           report.contentPath.replace(/[\\/]report\.html$/, '') +
           `${navigator.userAgent.includes('Windows') ? '\\' : '/'}agent-work`,
         threadId: chat.codexThreadId,
-        model: null,
+        model: report.outputOptions.model,
         effort: report.outputOptions.reasoningEffort,
         outputSchema: {
           type: 'object',
@@ -209,16 +216,12 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
         },
         writable: true,
       });
-      const parsed = JSON.parse(raw) as { updatedHtml?: unknown; changeSummary?: unknown };
-      if (typeof parsed.updatedHtml !== 'string' || !Array.isArray(parsed.changeSummary))
-        throw new Error('구조화된 수정 결과가 올바르지 않습니다.');
+      const parsed = parseStructuredOutput(raw, revisionOutputSchema);
       const html = DOMPurify.sanitize(parsed.updatedHtml, {
         FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
         FORBID_ATTR: ['style'],
       });
-      const summaries = parsed.changeSummary.filter(
-        (value): value is string => typeof value === 'string',
-      );
+      const summaries = parsed.changeSummary;
       setProposal({
         html,
         summary: summaries,
@@ -444,7 +447,14 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
               </div>
             ))}
             {ai.running && (
-              <div className="message assistant">{ai.stream || '응답을 기다리는 중…'}</div>
+              <div className="message assistant">
+                수정안을 생성하고 있습니다…{' '}
+                <span className="muted">
+                  {ai.stream.length > 0
+                    ? `구조화된 응답 ${ai.stream.length.toLocaleString()}자 수신`
+                    : '응답 대기 중'}
+                </span>
+              </div>
             )}
             {proposal && (
               <div>
@@ -640,20 +650,18 @@ async function hash(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 function displayMessage(content: string): string {
-  try {
-    const value = JSON.parse(content) as {
-      changeSummary?: unknown;
-      executiveSummary?: unknown;
-      suggestedTitle?: unknown;
-    };
-    if (Array.isArray(value.changeSummary))
-      return value.changeSummary
-        .filter((item): item is string => typeof item === 'string')
-        .join('\n');
-    if (typeof value.executiveSummary === 'string') return value.executiveSummary;
-    if (typeof value.suggestedTitle === 'string') return `작성 계획: ${value.suggestedTitle}`;
-  } catch {
-    return content;
-  }
+  const revision = safeStructuredParse(content, revisionOutputSchema);
+  if (revision) return revision.changeSummary.join('\n');
+  const generated = safeStructuredParse(content, reportOutputSchema);
+  if (generated) return generated.executiveSummary;
+  const plan = safeStructuredParse(content, planningOutputSchema);
+  if (plan) return `작성 계획: ${plan.suggestedTitle}`;
   return content;
+}
+function safeStructuredParse<T>(content: string, schema: z.ZodType<T>): T | null {
+  try {
+    return parseStructuredOutput(content, schema);
+  } catch {
+    return null;
+  }
 }

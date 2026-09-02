@@ -22,6 +22,7 @@ const modelResponseSchema = z
       z
         .object({
           id: z.string(),
+          model: z.string().optional(),
           displayName: z.string().optional(),
           isDefault: z.boolean().optional(),
           hidden: z.boolean().optional(),
@@ -32,10 +33,32 @@ const modelResponseSchema = z
                 .passthrough(),
             )
             .optional(),
+          defaultReasoningEffort: z.string().optional(),
           inputModalities: z.array(z.string()).optional(),
         })
         .passthrough(),
     ),
+  })
+  .passthrough();
+const turnCompletedSchema = z
+  .object({
+    turn: z
+      .object({
+        status: z.enum(['completed', 'interrupted', 'failed', 'inProgress']),
+        error: z.object({ message: z.string() }).passthrough().nullable().optional(),
+        items: z
+          .array(
+            z
+              .object({
+                type: z.string(),
+                text: z.string().optional(),
+                phase: z.enum(['commentary', 'final_answer']).nullable().optional(),
+              })
+              .passthrough(),
+          )
+          .default([]),
+      })
+      .passthrough(),
   })
   .passthrough();
 const accountResponseSchema = z
@@ -137,9 +160,10 @@ export class CodexAppServerManager extends EventEmitter {
         .parse(modelsRaw)
         .data.filter((item) => !item.hidden)
         .map<ModelInfo>((item) => ({
-          id: item.id,
+          id: item.model ?? item.id,
           displayName: item.displayName ?? item.id,
           isDefault: Boolean(item.isDefault),
+          defaultReasoningEffort: item.defaultReasoningEffort ?? null,
           reasoningEfforts: (item.supportedReasoningEfforts ?? [])
             .map((value) => value.reasoningEffort ?? value.effort)
             .filter((value): value is string => Boolean(value)),
@@ -395,10 +419,34 @@ export class CodexAppServerManager extends EventEmitter {
     } else if (method === 'turn/completed') {
       const active = this.activeTurn;
       if (active) {
+        const completed = turnCompletedSchema.safeParse(params);
+        if (completed.success && completed.data.turn.status !== 'completed') {
+          const interrupted = completed.data.turn.status === 'interrupted';
+          this.emit('event', {
+            type: 'error',
+            taskId: active.taskId,
+            sessionId: active.sessionId,
+            errorCode: interrupted ? 'CODEX_TURN_INTERRUPTED' : 'CODEX_EXECUTION_FAILED',
+            message: interrupted ? 'AI 작업이 중단되었습니다.' : 'AI 작업을 완료하지 못했습니다.',
+          } satisfies CodexEvent);
+          this.activeTurn = null;
+          this.update({ state: 'ready' });
+          return;
+        }
+        const messages = completed.success
+          ? completed.data.turn.items.filter(
+              (item): item is typeof item & { text: string } =>
+                item.type === 'agentMessage' && typeof item.text === 'string',
+            )
+          : [];
+        const finalText =
+          [...messages].reverse().find((item) => item.phase === 'final_answer')?.text ??
+          messages.at(-1)?.text;
         this.emit('event', {
           type: 'complete',
           taskId: active.taskId,
           sessionId: active.sessionId,
+          ...(finalText !== undefined ? { text: finalText } : {}),
         } satisfies CodexEvent);
         this.activeTurn = null;
         this.update({ state: 'ready' });

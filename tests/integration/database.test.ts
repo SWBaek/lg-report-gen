@@ -19,6 +19,7 @@ const options = {
   conclusionFirst: true,
   terminology: 'standard',
   evidence: 'standard',
+  model: null,
   reasoningEffort: null,
 } as const;
 async function database() {
