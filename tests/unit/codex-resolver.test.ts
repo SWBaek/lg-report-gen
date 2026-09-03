@@ -70,5 +70,5 @@ describe('Codex executable trust policy', () => {
     expect(result.status).toBe('NotSigned');
     expect(result.signer).toBeNull();
     expect(result.trusted).toBe(false);
-  });
+  }, 20_000);
 });

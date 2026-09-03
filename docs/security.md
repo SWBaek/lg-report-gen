@@ -11,7 +11,7 @@
 - Export filename은 `.lock` 파일을 `wx`로 먼저 예약하고, HTML/PDF 본문은 flush 후 atomic rename한다. 승인 토큰은 Main에서 발급하는 TTL 일회성 값이며 형식과 report ID에 묶여 있다.
 - Path traversal은 resolved root prefix로 검증하며 Windows 예약명과 위험 문자를 제거한다.
 - Codex는 인증 파일/토큰/API Key를 읽거나 저장하지 않는다. stderr는 token-like 문자열과 이메일을 가리고 크기를 제한한다.
-- Windows에서 Codex 실행 파일은 `Get-AuthenticodeSignature`를 `shell:false`, 숨김 창, 5초 timeout으로 조회한다. 검사 경로는 PowerShell 명령문에 보간하지 않고 전용 환경변수로 전달하며, Windows PowerShell의 기본 Security module 경로만 사용해 부모 PowerShell 버전의 module-path 오염을 차단한다. 기본 publisher는 `OpenAI`이며 `Valid` 서명과 publisher 일치가 모두 필요하다. 경로·CLI version·SHA-256·signer·signature status는 내용 없이 로컬 진단에만 사용할 수 있다. 서명 없는 개발 fixture는 `NODE_ENV=development|test`에서 `LG_REPORT_AGENT_CODEX_ALLOW_UNSIGNED_DEV=1`을 함께 지정한 경우에만 허용하며, 패키지 실행에는 적용되지 않는다.
+- Windows에서 Codex 실행 파일은 `Get-AuthenticodeSignature`를 `shell:false`, 숨김 창, 15초 timeout으로 조회한다. 검사 경로는 PowerShell 명령문에 보간하지 않고 전용 환경변수로 전달하며, Windows PowerShell의 기본 Security module 경로만 사용해 부모 PowerShell 버전의 module-path 오염을 차단한다. 기본 publisher는 `OpenAI`이며 `Valid` 서명과 publisher 일치가 모두 필요하다. 경로·CLI version·SHA-256·signer·signature status는 내용 없이 로컬 진단에만 사용할 수 있다. 서명 없는 개발 fixture는 `NODE_ENV=development|test`에서 `LG_REPORT_AGENT_CODEX_ALLOW_UNSIGNED_DEV=1`을 함께 지정한 경우에만 허용하며, 패키지 실행에는 적용되지 않는다.
 - 사용자가 지정한 Codex 경로가 존재하지 않거나 실행/버전 검증에 실패하면 PATH나 알려진 설치 위치로 조용히 대체하지 않는다. App Server 지원 버전 범위 밖의 CLI도 거부한다.
 - Prompt, 첨부 본문, 보고서 HTML은 진단 로그에 쓰지 않는다. Telemetry/Crash Reporter/자동 업데이트는 없다.
 - AI prompt에는 요청·첨부·현재 HTML을 명시적인 untrusted envelope로 감싸 전달하며, 구조화 출력은 버전(1), 문자열/배열 상한, Zod 검증을 통과해야 한다. 생성 provenance와 claim/evidence 연결은 source extraction snapshot hash와 함께 저장되고, 삭제된 report/chat의 Codex thread 정리 실패는 pending retention으로만 보존한다.

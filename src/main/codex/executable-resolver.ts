@@ -151,7 +151,7 @@ export async function inspectAuthenticodeSignature(filePath: string): Promise<Si
   const result = await runCapture(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-    5000,
+    15_000,
     {
       LG_REPORT_AGENT_AUTHENTICODE_PATH: filePath,
       // A parent PowerShell 7 session may prepend its modules to PSModulePath.
