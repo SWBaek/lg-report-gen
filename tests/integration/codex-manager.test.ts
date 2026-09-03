@@ -70,7 +70,7 @@ describe('Codex JSON-RPC broker', () => {
   it('negotiates a supported protocol and exposes client provenance without secrets', async () => {
     const { manager } = await createManager();
     expect(manager.protocolInfo).toMatchObject({
-      client: { name: 'lg-report-agent', version: '1.0.3' },
+      client: { name: 'lg-report-agent', version: '1.1.0' },
       server: { name: 'mock', version: '99.0.0-test' },
       protocolVersion: 'v1',
       supported: true,
