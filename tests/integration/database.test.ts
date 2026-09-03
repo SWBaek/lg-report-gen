@@ -112,6 +112,29 @@ describe('SQLite repositories', () => {
     expect(revision.outputOptions).toEqual(options);
     db.close();
   });
+  it('parses sanitized HTML into Tiptap without regex tag stripping or double entity decoding', async () => {
+    const db = await database();
+    const report = await db.createReport({
+      title: 'DOM 변환',
+      purpose: '',
+      personaId: null,
+      outputOptions: options,
+      layoutMode: 'web',
+      html: '<h2><strong>제목</strong></h2><p>&amp;lt;script&amp;gt;</p><script>alert(1)</script>',
+    });
+    const document = report.editorJson as {
+      type: string;
+      content: Array<{ type: string; attrs?: { level?: number }; content?: unknown[] }>;
+    };
+    expect(document.content[0]).toMatchObject({
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: '제목', marks: [{ type: 'bold' }] }],
+    });
+    expect(JSON.stringify(document)).toContain('&lt;script&gt;');
+    expect(JSON.stringify(document)).not.toContain('alert(1)');
+    db.close();
+  });
   it('saves generated content while quarantining invented source references', async () => {
     const db = await database();
     const report = await db.createReport({

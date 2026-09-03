@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { access, mkdir, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { parseDocument } from 'htmlparser2';
 import type {
   ChatMessage,
   ChatSession,
@@ -1697,12 +1698,7 @@ function isEmptyTiptapDocument(value: { type: 'doc'; content?: unknown[] }): boo
   return !Array.isArray(value.content) || value.content.length === 0;
 }
 function hasVisibleHtml(html: string): boolean {
-  return (
-    html
-      .replace(/<[^>]*>/g, '')
-      .replace(/&(?:nbsp|#160);/gi, ' ')
-      .trim().length > 0
-  );
+  return nodeText(parseHtml(html)).replaceAll('\u00a0', ' ').trim().length > 0;
 }
 function readEditorEnvelope(value: unknown): unknown {
   if (value && typeof value === 'object' && 'editorJson' in value) {
@@ -1720,69 +1716,167 @@ function readEditorEnvelope(value: unknown): unknown {
 }
 
 function htmlToTiptap(html: string): { type: 'doc'; content: unknown[] } {
-  // This intentionally small projection parser covers the document nodes the
-  // application allows. Unknown/inline fragments are kept as paragraphs.
-  const blocks: unknown[] = [];
-  const blockPattern = /<(h[1-4]|p|blockquote|pre|ul|ol)\b[^>]*>([\s\S]*?)<\/\1>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = blockPattern.exec(html))) {
-    const tag = match[1]!.toLowerCase();
-    const body = match[2]!;
-    if (tag === 'ul' || tag === 'ol') {
-      const items = [...body.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)].map((item) => ({
-        type: 'listItem',
-        content: [{ type: 'paragraph', content: inlineTiptap(item[1]!) }],
-      }));
-      blocks.push({ type: tag === 'ul' ? 'bulletList' : 'orderedList', content: items });
-    } else if (tag === 'blockquote')
-      blocks.push({
-        type: 'blockquote',
-        content: [{ type: 'paragraph', content: inlineTiptap(body) }],
-      });
-    else if (tag === 'pre')
-      blocks.push({ type: 'codeBlock', content: [{ type: 'text', text: stripTags(body) }] });
-    else blocks.push({ type: tag, content: inlineTiptap(body) });
-  }
-  if (!blocks.length && hasVisibleHtml(html))
-    blocks.push({ type: 'paragraph', content: inlineTiptap(html) });
+  const blocks = parseHtml(html).children.flatMap(blockTiptap);
   return { type: 'doc', content: blocks };
 }
-function inlineTiptap(value: string): unknown[] {
+
+type HtmlNode = {
+  type: string;
+  name?: string;
+  data?: string;
+  attribs?: Record<string, string>;
+  children?: HtmlNode[];
+};
+
+function parseHtml(html: string): { children: HtmlNode[] } {
+  return parseDocument(html, { decodeEntities: true }) as unknown as { children: HtmlNode[] };
+}
+
+function blockTiptap(node: HtmlNode): unknown[] {
+  if (node.type === 'text') {
+    const text = node.data ?? '';
+    return text.trim() ? [{ type: 'paragraph', content: textTiptap(text) }] : [];
+  }
+  const tag = node.name?.toLowerCase();
+  const children = node.children ?? [];
+  if (!tag) return children.flatMap(blockTiptap);
+  if (/^h[1-4]$/.test(tag))
+    return [
+      {
+        type: 'heading',
+        attrs: { level: Number(tag.slice(1)) },
+        content: inlineTiptap(children),
+      },
+    ];
+  if (tag === 'p') return [{ type: 'paragraph', content: inlineTiptap(children) }];
+  if (tag === 'blockquote') {
+    const content = children.flatMap(blockTiptap);
+    return [
+      {
+        type: 'blockquote',
+        content: content.length
+          ? content
+          : [{ type: 'paragraph', content: inlineTiptap(children) }],
+      },
+    ];
+  }
+  if (tag === 'pre') {
+    const text = nodeText(node);
+    return [{ type: 'codeBlock', ...(text ? { content: textTiptap(text) } : {}) }];
+  }
+  if (tag === 'ul' || tag === 'ol') return [listTiptap(node, tag === 'ol')];
+  if (tag === 'table') return [tableTiptap(node)];
+  if (tag === 'hr') return [{ type: 'horizontalRule' }];
+  const nestedBlocks = children.flatMap((child) =>
+    isBlockElement(child) ? blockTiptap(child) : [],
+  );
+  if (nestedBlocks.length) return nestedBlocks;
+  const inline = inlineTiptap(children);
+  return inline.length ? [{ type: 'paragraph', content: inline }] : [];
+}
+
+function inlineTiptap(nodes: HtmlNode[], inheritedMarks: unknown[] = []): unknown[] {
   const result: unknown[] = [];
-  const token = /<(strong|b|em|i|u|s|a)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-  while ((match = token.exec(value))) {
-    if (match.index > cursor)
-      result.push({ type: 'text', text: stripTags(value.slice(cursor, match.index)) });
-    const marks: unknown[] = [];
-    const tag = match[1]!.toLowerCase();
+  for (const node of nodes) {
+    if (node.type === 'text') {
+      const text = node.data ?? '';
+      if (text) result.push(...textTiptap(text, inheritedMarks));
+      continue;
+    }
+    const tag = node.name?.toLowerCase();
+    if (!tag) {
+      result.push(...inlineTiptap(node.children ?? [], inheritedMarks));
+      continue;
+    }
+    if (tag === 'br') {
+      result.push({ type: 'hardBreak' });
+      continue;
+    }
+    if (tag === 'img') {
+      const src = node.attribs?.src;
+      if (src)
+        result.push({
+          type: 'image',
+          attrs: {
+            src,
+            alt: node.attribs?.alt ?? null,
+            title: node.attribs?.title ?? null,
+          },
+        });
+      continue;
+    }
+    const marks = [...inheritedMarks];
     if (tag === 'strong' || tag === 'b') marks.push({ type: 'bold' });
     if (tag === 'em' || tag === 'i') marks.push({ type: 'italic' });
     if (tag === 'u') marks.push({ type: 'underline' });
     if (tag === 's') marks.push({ type: 'strike' });
-    if (tag === 'a') {
-      const href = /href=["']([^"']*)["']/i.exec(match[2]!)?.[1];
-      if (href) marks.push({ type: 'link', attrs: { href } });
-    }
-    const text = stripTags(match[3]!);
-    if (text) result.push({ type: 'text', text, ...(marks.length ? { marks } : {}) });
-    cursor = match.index + match[0].length;
+    if (tag === 'code') marks.push({ type: 'code' });
+    if (tag === 'a' && node.attribs?.href)
+      marks.push({ type: 'link', attrs: { href: node.attribs.href } });
+    result.push(...inlineTiptap(node.children ?? [], marks));
   }
-  const tail = stripTags(value.slice(cursor));
-  if (tail) result.push({ type: 'text', text: tail });
   return result;
 }
-function stripTags(value: string): string {
-  return value
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/gi, '"');
+
+function textTiptap(text: string, marks: unknown[] = []): unknown[] {
+  return text ? [{ type: 'text', text, ...(marks.length ? { marks } : {}) }] : [];
+}
+
+function listTiptap(node: HtmlNode, ordered: boolean): Record<string, unknown> {
+  const items = (node.children ?? [])
+    .filter((child) => child.name?.toLowerCase() === 'li')
+    .map((item) => {
+      const children = item.children ?? [];
+      const nestedLists = children.filter((child) => ['ul', 'ol'].includes(child.name ?? ''));
+      const inline = children.filter((child) => !nestedLists.includes(child));
+      return {
+        type: 'listItem',
+        content: [
+          { type: 'paragraph', content: inlineTiptap(inline) },
+          ...nestedLists.map((child) => listTiptap(child, child.name === 'ol')),
+        ],
+      };
+    });
+  return { type: ordered ? 'orderedList' : 'bulletList', content: items };
+}
+
+function tableTiptap(node: HtmlNode): Record<string, unknown> {
+  const rows = descendants(node, 'tr').map((row) => ({
+    type: 'tableRow',
+    content: (row.children ?? [])
+      .filter((cell) => cell.name === 'th' || cell.name === 'td')
+      .map((cell) => ({
+        type: cell.name === 'th' ? 'tableHeader' : 'tableCell',
+        attrs: {
+          colspan: Number(cell.attribs?.colspan ?? 1),
+          rowspan: Number(cell.attribs?.rowspan ?? 1),
+          colwidth: null,
+        },
+        content: [{ type: 'paragraph', content: inlineTiptap(cell.children ?? []) }],
+      })),
+  }));
+  return { type: 'table', content: rows };
+}
+
+function descendants(node: HtmlNode, tag: string): HtmlNode[] {
+  const result: HtmlNode[] = [];
+  for (const child of node.children ?? []) {
+    if (child.name?.toLowerCase() === tag) result.push(child);
+    else result.push(...descendants(child, tag));
+  }
+  return result;
+}
+
+function nodeText(node: HtmlNode | { children: HtmlNode[] }): string {
+  if ('type' in node && node.type === 'text') return node.data ?? '';
+  if ('type' in node && node.name?.toLowerCase() === 'br') return '\n';
+  return (node.children ?? []).map(nodeText).join('');
+}
+
+function isBlockElement(node: HtmlNode): boolean {
+  return /^(?:h[1-4]|p|blockquote|pre|ul|ol|table|hr|div|figure|figcaption)$/.test(
+    node.name?.toLowerCase() ?? '',
+  );
 }
 
 function parseRevisionEnvelope(
