@@ -14,13 +14,22 @@ interface Props {
   onNewChat: () => void;
   onSettings: () => void;
   onTrash: () => void;
+  open?: boolean;
+  onClose?: () => void;
 }
 export function Sidebar(props: Props) {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${props.open === false ? 'is-collapsed' : ''}`} aria-label="주 탐색">
       <div className="brand">
         <FileText size={22} />
-        LG Report Agent
+        <span>LG Report Agent</span>
+        <button
+          className="sidebar-toggle button icon"
+          aria-label="탐색 메뉴 닫기"
+          onClick={props.onClose}
+        >
+          <span aria-hidden="true">×</span>
+        </button>
       </div>
       <button className="primary" onClick={props.onNewReport}>
         <FilePlus2 size={17} />새 보고서
@@ -33,8 +42,10 @@ export function Sidebar(props: Props) {
         onChange={(e) => props.onQuery(e.target.value)}
       />
       <section className="nav-section">
-        <div className="nav-title">보고서</div>
-        <div className="nav-list">
+        <div className="nav-title" id="reports-nav-title">
+          보고서
+        </div>
+        <div className="nav-list" aria-labelledby="reports-nav-title">
           {props.reports
             .filter((r) =>
               `${r.title} ${r.purpose}`.toLowerCase().includes(props.query.toLowerCase()),
@@ -43,7 +54,9 @@ export function Sidebar(props: Props) {
               <button
                 key={report.id}
                 className={`nav-item ${props.activeId === report.id ? 'active' : ''}`}
-                onClick={() => props.onReport(report.id)}
+                onClick={() => {
+                  props.onReport(report.id);
+                }}
               >
                 <FileText size={15} />
                 <span>{report.title}</span>
@@ -53,20 +66,22 @@ export function Sidebar(props: Props) {
         </div>
       </section>
       <section className="nav-section">
-        <div className="nav-title">
+        <div className="nav-title" id="chat-nav-title">
           Chat
           <button className="button icon" aria-label="새 Chat" onClick={props.onNewChat}>
             <MessageSquarePlus size={15} />
           </button>
         </div>
-        <div className="nav-list">
+        <div className="nav-list" aria-labelledby="chat-nav-title">
           {props.chats
             .filter((c) => c.title.toLowerCase().includes(props.query.toLowerCase()))
             .map((chat) => (
               <button
                 key={chat.id}
                 className={`nav-item ${props.activeId === chat.id ? 'active' : ''}`}
-                onClick={() => props.onChat(chat.id)}
+                onClick={() => {
+                  props.onChat(chat.id);
+                }}
               >
                 <span>
                   #{chat.kind === 'report' ? '보고서 AI' : '대화'} · {chat.title}

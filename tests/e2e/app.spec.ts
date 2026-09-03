@@ -35,6 +35,10 @@ async function launch(): Promise<void> {
       ...process.env,
       ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
       LG_REPORT_AGENT_E2E_USER_DATA: path.join(root, 'user-data'),
+      // The wrapper is deliberately unsigned; this explicit override is only
+      // for the unpackaged development E2E launched with `args: ['.']`.
+      NODE_ENV: 'test',
+      LG_REPORT_AGENT_CODEX_ALLOW_UNSIGNED_DEV: '1',
     },
     timeout: 30_000,
   });
@@ -138,6 +142,13 @@ test('first run, local report workflow, restart, chat, and export', async () => 
   } finally {
     await previewApplication.close();
   }
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'PDF 내보내기' }).click();
+  await expect
+    .poll(async () => (await import('node:fs/promises')).readdir(path.join(workspace, 'exports')))
+    .toContain('E2E 검증 보고서.pdf');
+  const exportedPdf = await readFile(path.join(exports, 'E2E 검증 보고서.pdf'));
+  expect(exportedPdf.subarray(0, 5).toString('ascii')).toBe('%PDF-');
   await app.close();
   await launch();
   await page.getByRole('button', { name: 'E2E 검증 보고서', exact: true }).click();

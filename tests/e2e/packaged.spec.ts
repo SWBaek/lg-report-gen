@@ -39,7 +39,7 @@ test('packaged app opens its native database and preload bridge', async () => {
   );
   const application = await electron.launch({
     executablePath: packagedAppPath ?? '',
-    env: { ...process.env, LG_REPORT_AGENT_E2E_USER_DATA: userData },
+    args: [`--user-data-dir=${userData}`],
   });
   try {
     const page = await application.firstWindow();
@@ -47,7 +47,9 @@ test('packaged app opens its native database and preload bridge', async () => {
     await expect(page.getByRole('button', { name: /새 보고서/ }).first()).toBeVisible();
     await page.getByRole('button', { name: '설정' }).click();
     await page.getByRole('button', { name: '새로고침' }).click();
-    await expect(page.getByText('준비됨')).toBeVisible({ timeout: 15_000 });
+    // Production packaged runs do not trust the unsigned Codex test shim. Verify that
+    // untrusted-provider state is surfaced, then exercise the Codex-independent wizard path.
+    await expect(page.getByText('미설치', { exact: true })).toBeVisible({ timeout: 15_000 });
     await application.evaluate(({ dialog }, selectedPath) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] });
     }, sourcePath);
@@ -87,7 +89,11 @@ test('packaged app opens its native database and preload bridge', async () => {
       manifest.sources[0]?.extractionStatus,
     );
     expect(manifest.sources[0]?.metadata.pageCount).toBe(1);
-    const extractedPdf = JSON.parse(await readFile(manifest.sources[0]!.extractedPath, 'utf8')) as {
+    const reportRoot = path.join(workspace, 'reports', reportDirectories[0]!);
+    const extractedPath = path.isAbsolute(manifest.sources[0]!.extractedPath)
+      ? manifest.sources[0]!.extractedPath
+      : path.resolve(reportRoot, manifest.sources[0]!.extractedPath);
+    const extractedPdf = JSON.parse(await readFile(extractedPath, 'utf8')) as {
       content: { text: string }[];
     };
     expect(extractedPdf.content[0]?.text).toContain('Packaged PDF extraction evidence');
@@ -102,6 +108,40 @@ test('packaged app opens its native database and preload bridge', async () => {
     );
     expect(exportedHtml).toContain('data:font/woff2;base64,');
     await page.screenshot({ path: 'artifacts/screenshots/06-packaged-ready.png', fullPage: true });
+  } finally {
+    await application.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('packaged app discovers the installed signed Codex CLI', async () => {
+  test.skip(
+    process.env.PACKAGED_REAL_CODEX !== '1',
+    '로컬의 실제 서명된 Codex CLI를 사용하는 opt-in smoke test',
+  );
+  const root = await mkdtemp(path.join(os.tmpdir(), 'lg-report-packaged-real-codex-'));
+  const userData = path.join(root, 'user-data');
+  const workspace = path.join(root, 'workspace');
+  await Promise.all([mkdir(userData, { recursive: true }), mkdir(workspace, { recursive: true })]);
+  await writeFile(
+    path.join(userData, 'bootstrap.json'),
+    JSON.stringify({
+      workspacePath: workspace,
+      consentAccepted: true,
+      codexExecutablePath: null,
+      windowBounds: { width: 1180, height: 720 },
+      sandboxMode: 'workspace-write',
+    }),
+  );
+  const application = await electron.launch({
+    executablePath: packagedAppPath ?? '',
+    args: [`--user-data-dir=${userData}`],
+  });
+  try {
+    const page = await application.firstWindow();
+    await page.getByRole('button', { name: '설정' }).click();
+    await page.getByRole('button', { name: '새로고침' }).click();
+    await expect(page.getByText('준비됨', { exact: true })).toBeVisible({ timeout: 20_000 });
   } finally {
     await application.close();
     await rm(root, { recursive: true, force: true });

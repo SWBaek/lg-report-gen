@@ -14,11 +14,19 @@
     "test": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "npm run build && playwright test",
-    "test:e2e:packaged": "playwright test tests/e2e/packaged.spec.ts",
+    "test:e2e:packaged": "node scripts/run-packaged-e2e.mjs",
     "test:integration:codex": "vitest run tests/codex-smoke --passWithNoTests",
     "build": "electron-vite build",
     "build:win": "npm run build && node scripts/build-win.mjs && npm run check:package-size",
     "check:package-size": "node scripts/check-package-size.mjs",
+    "check:release-signing": "node scripts/check-code-signing.mjs",
+    "verify:release-signatures": "node scripts/verify-release-signatures.mjs",
+    "verify:electron-fuses": "node scripts/check-electron-fuses.mjs",
+    "release:checksums": "node scripts/create-release-checksums.mjs",
+    "release:verify": "node scripts/verify-release-assets.mjs",
+    "release:sbom": "node scripts/generate-sbom.mjs",
+    "licenses:production": "node scripts/generate-production-licenses.mjs",
+    "release:metadata": "npm run release:sbom && npm run licenses:production",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run test && npm run test:integration && npm run build",
     "postinstall": "node scripts/install-native.mjs"
   },
@@ -44,6 +52,17 @@
       "en-US"
     ],
     "npmRebuild": false,
+    "forceCodeSigning": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "loadBrowserProcessSpecificV8Snapshot": false,
+      "grantFileProtocolExtraPrivileges": true
+    },
     "electronDist": "node_modules/electron/dist",
     "asarUnpack": [
       "node_modules/better-sqlite3/native/better_sqlite3-electron.node"
@@ -118,6 +137,7 @@
     "sanitize-html": "^2.17.7",
     "zod": "^4.5.4",
     "@eslint/js": "^10.0.1",
+    "@electron/fuses": "^1.8.0",
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

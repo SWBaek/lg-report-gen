@@ -2,8 +2,10 @@ import { app, BrowserWindow, session, screen } from 'electron';
 import path from 'node:path';
 import { ApplicationContext } from './app/context.js';
 import { registerIpc, unregisterIpc } from './ipc/register.js';
+import { rendererUrlFromEnvironment } from './security/renderer.js';
 
-if (process.env.LG_REPORT_AGENT_E2E_USER_DATA) {
+// The test-only userData override is never honored by a packaged build.
+if (!app.isPackaged && process.env.LG_REPORT_AGENT_E2E_USER_DATA) {
   app.setPath('userData', process.env.LG_REPORT_AGENT_E2E_USER_DATA);
 }
 const context = new ApplicationContext();
@@ -66,7 +68,8 @@ function createWindow(): void {
   window.on('closed', () => {
     context.mainWindow = null;
   });
-  if (process.env.ELECTRON_RENDERER_URL) void window.loadURL(process.env.ELECTRON_RENDERER_URL);
+  const rendererUrl = rendererUrlFromEnvironment();
+  if (rendererUrl) void window.loadURL(rendererUrl);
   else void window.loadFile(path.join(__dirname, '../renderer/index.html'));
 }
 function visibleBounds(saved: { x?: number; y?: number; width: number; height: number }): {

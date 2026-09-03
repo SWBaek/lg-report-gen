@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const idSchema = z.string().uuid();
-export const workspacePathSchema = z.object({ path: z.string().min(1).max(1024) });
+export const workspacePathSchema = z.object({ path: z.string().min(1).max(1024) }).strict();
 export const reportOutputOptionsSchema = z.object({
   tone: z.enum(['concise', 'standard', 'detailed']).default('standard'),
   audience: z.enum(['executive', 'manager', 'practitioner', 'expert']).default('manager'),
@@ -28,8 +28,69 @@ export const saveReportSchema = z.object({
   html: z.string().max(10_000_000),
   editorJson: z.unknown(),
   layoutMode: z.enum(['a4', 'web']),
+  generation: z
+    .object({
+      schemaVersion: z.literal(1).default(1),
+      executiveSummary: z.string().max(30_000),
+      sourceUsage: z
+        .array(
+          z.object({
+            sourceId: z.string().uuid(),
+            locator: z.string().trim().min(1).max(500),
+            claimSummary: z.string().max(5_000),
+          }),
+        )
+        .max(200),
+      assumptions: z.array(z.string().max(5_000)).max(100),
+      warnings: z.array(z.string().max(5_000)).max(100),
+      model: z.string().max(200).nullable().default(null),
+      promptVersion: z.string().trim().min(1).max(100),
+      sourceSnapshotHashes: z
+        .record(z.string().uuid(), z.string().regex(/^[0-9a-f]{64}$/i))
+        .default({}),
+      claimEvidence: z
+        .array(
+          z.object({
+            claim: z.string().min(1).max(5_000),
+            sourceId: z.string().uuid(),
+            locator: z.string().trim().min(1).max(500),
+            evidenceExcerpt: z.string().max(10_000).optional(),
+          }),
+        )
+        .max(500)
+        .default([]),
+    })
+    .strict()
+    .optional(),
 });
 export const reportIdSchema = z.object({ id: idSchema });
+export const exportMetadataSchema = z
+  .object({
+    lang: z.enum(['ko', 'en', 'bilingual']).default('ko'),
+    author: z.string().max(200).default(''),
+    date: z.string().max(100).default(''),
+    revision: z.string().max(100).default(''),
+    classification: z.string().max(100).default(''),
+    header: z.string().max(500).default(''),
+    footer: z.string().max(500).default('LG Report Agent'),
+    pageNumber: z.boolean().default(true),
+  })
+  .strict();
+export const reportExportPreflightSchema = z
+  .object({
+    id: idSchema,
+    format: z.enum(['html', 'pdf']).default('html'),
+    metadata: exportMetadataSchema.optional(),
+  })
+  .strict();
+export const reportExportSchema = z
+  .object({
+    id: idSchema,
+    format: z.enum(['html', 'pdf']).default('html'),
+    approvalToken: z.string().min(20).max(200).optional(),
+    metadata: exportMetadataSchema.optional(),
+  })
+  .strict();
 export const listReportsSchema = z.object({
   includeDeleted: z.boolean().default(false),
   query: z.string().max(200).default(''),
@@ -50,10 +111,16 @@ export const personaSchema = z.object({
   instructions: z.string().max(10_000),
   isDefault: z.boolean().default(false),
 });
-export const importSourcesSchema = z.object({
-  reportId: idSchema,
-  paths: z.array(z.string().min(1).max(1024)).min(1).max(50),
-});
+export const importSourcesSchema = z
+  .object({
+    reportId: idSchema,
+    selectionIds: z
+      .array(idSchema)
+      .min(1)
+      .max(50)
+      .refine((ids) => new Set(ids).size === ids.length, '선택 토큰은 중복될 수 없습니다.'),
+  })
+  .strict();
 export const chatCreateSchema = z.object({
   title: z.string().trim().min(1).max(200).default('새 대화'),
   reportId: idSchema.nullable().default(null),
@@ -64,58 +131,73 @@ export const chatAiSettingsSchema = z.object({
   reasoningEffort: z.string().min(1).max(50).nullable(),
 });
 export const messageListSchema = z.object({ sessionId: idSchema });
-export const codexTurnSchema = z.object({
-  sessionType: z.enum(['chat', 'report', 'planning', 'generation', 'revision']),
-  sessionId: idSchema,
-  prompt: z.string().min(1).max(2_000_000),
-  displayText: z.string().max(100_000).optional(),
-  cwd: z.string().min(1).max(1024),
-  threadId: z.string().nullable().default(null),
-  model: z.string().nullable().default(null),
-  effort: z.string().nullable().default(null),
-  outputSchema: z.record(z.string(), z.unknown()).nullable().default(null),
-  writable: z.boolean().default(false),
-});
-export const externalUrlSchema = z.object({
-  url: z
-    .string()
-    .url()
-    .refine((url) => url.startsWith('https://'), 'HTTPS만 허용됩니다.'),
-});
+export const codexTurnSchema = z
+  .object({
+    intent: z.enum(['chat', 'plan', 'generate', 'revise']),
+    sessionId: idSchema,
+    prompt: z.string().min(1).max(2_000_000),
+    displayText: z.string().max(100_000).optional(),
+    model: z.string().nullable().default(null),
+    effort: z.string().nullable().default(null),
+  })
+  .strict();
+export const codexCancelSchema = z
+  .object({ taskId: idSchema.optional(), sessionId: idSchema.optional() })
+  .strict();
+export const externalPurposeSchema = z.object({ purpose: z.enum(['codexCliDocs']) }).strict();
 export const textSchema = z.object({ text: z.string().max(100_000) });
 
 export const planningOutputSchema = z.object({
-  suggestedTitle: z.string(),
-  purpose: z.string(),
-  executiveSummaryDirection: z.string(),
-  outline: z.array(
-    z.object({
-      id: z.string(),
-      heading: z.string(),
-      level: z.number().int().min(1).max(4),
-      intent: z.string(),
-      evidenceSourceIds: z.array(z.string()),
-    }),
-  ),
-  assumptions: z.array(z.string()),
-  questions: z.array(z.string()),
-  warnings: z.array(z.string()),
+  schemaVersion: z.literal(1),
+  suggestedTitle: z.string().max(200),
+  purpose: z.string().max(10_000),
+  executiveSummaryDirection: z.string().max(10_000),
+  outline: z
+    .array(
+      z
+        .object({
+          id: z.string().max(100),
+          heading: z.string().max(300),
+          level: z.number().int().min(1).max(4),
+          intent: z.string().max(5_000),
+          evidenceSourceIds: z.array(z.string().uuid()).max(50),
+        })
+        .strict(),
+    )
+    .max(100),
+  assumptions: z.array(z.string().max(5_000)).max(100),
+  questions: z.array(z.string().max(5_000)).max(100),
+  warnings: z.array(z.string().max(5_000)).max(100),
 });
 export const reportOutputSchema = z.object({
-  title: z.string(),
-  htmlBody: z.string(),
-  executiveSummary: z.string(),
-  sourceUsage: z.array(
-    z.object({ sourceId: z.string(), locator: z.string(), claimSummary: z.string() }),
-  ),
-  assumptions: z.array(z.string()),
-  warnings: z.array(z.string()),
+  schemaVersion: z.literal(1),
+  title: z.string().max(200),
+  htmlBody: z.string().max(10_000_000),
+  executiveSummary: z.string().max(30_000),
+  sourceUsage: z
+    .array(
+      z
+        .object({
+          sourceId: z.string().uuid(),
+          locator: z.string().trim().min(1).max(500),
+          claimSummary: z.string().max(5_000),
+        })
+        .strict(),
+    )
+    .max(200),
+  assumptions: z.array(z.string().max(5_000)).max(100),
+  warnings: z.array(z.string().max(5_000)).max(100),
 });
 export const revisionOutputSchema = z.object({
+  schemaVersion: z.literal(1).default(1),
   scope: z.enum(['document', 'selection']),
-  updatedHtml: z.string(),
-  replacementHtml: z.string().nullable(),
-  changeSummary: z.array(z.string()),
-  assumptions: z.array(z.string()),
-  warnings: z.array(z.string()),
+  updatedHtml: z.string().max(10_000_000),
+  replacementHtml: z.string().max(10_000_000).nullable(),
+  changeSummary: z.array(z.string().max(5_000)).max(100),
+  assumptions: z.array(z.string().max(5_000)).max(100),
+  warnings: z.array(z.string().max(5_000)).max(100),
 });
+
+export const reportGenerationListSchema = z.object({ reportId: idSchema });
+export const deletionRetentionListSchema = z.object({ id: idSchema }).partial().strict();
+export const deletionRetentionRetrySchema = z.object({ id: idSchema }).strict();
