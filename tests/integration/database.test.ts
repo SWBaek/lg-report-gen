@@ -340,7 +340,11 @@ describe('SQLite repositories', () => {
     expect(snapshot.manifest.files.some((file) => file.path === 'app.db')).toBe(true);
     expect(snapshot.manifest.files.some((file) => file.path.endsWith('/report.html'))).toBe(true);
     expect((await restoreWorkspaceSnapshotDryRun(paths, snapshot.directory)).valid).toBe(true);
-    await writeFile(report.contentPath.replace(root, snapshot.directory), '<p>변조</p>');
+    const snapshotReportPath = path.join(
+      snapshot.directory,
+      path.relative(paths.root, report.contentPath),
+    );
+    await writeFile(snapshotReportPath, '<p>변조</p>');
     const check = await restoreWorkspaceSnapshotDryRun(paths, snapshot.directory);
     expect(check.valid).toBe(false);
     expect(check.files.modified).toContain(`reports/${report.id}/report.html`);
