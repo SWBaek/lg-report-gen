@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {
   contentHash,
+  readJson,
+  readJsonOrQuarantine,
   resolveWithin,
   safeFilename,
   sanitizeReportHtml,
@@ -24,6 +28,23 @@ describe('secure file and HTML utilities', () => {
     const root = path.resolve('safe');
     expect(() => resolveWithin(root, '..', 'outside')).toThrow('PATH_TRAVERSAL');
     expect(resolveWithin(root, 'inside')).toContain('inside');
+  });
+  it('uses fallback only for ENOENT and quarantines corrupt JSON', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lg-agent-json-'));
+    try {
+      const missing = path.join(root, 'missing.json');
+      expect(await readJson(missing, { ok: true })).toEqual({ ok: true });
+      const corrupt = path.join(root, 'bootstrap.json');
+      await writeFile(corrupt, '{not-json');
+      expect(await readJsonOrQuarantine(corrupt, { ok: true })).toEqual({ ok: true });
+      expect(await readdir(root)).toHaveLength(1);
+      expect((await readdir(root))[0]).toContain('bootstrap.json.corrupt-');
+      await expect(readJson(corrupt, { ok: true })).resolves.toEqual({ ok: true });
+      // The original name is now absent; ENOENT is the only ordinary default path.
+      expect(await readFile(path.join(root, (await readdir(root))[0]!), 'utf8')).toBe('{not-json');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
   it('creates stable SHA-256 hashes', () => {
     expect(contentHash('hello')).toBe(

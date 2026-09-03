@@ -38,7 +38,12 @@ import {
   UnderlineIcon,
   Undo2,
 } from 'lucide-react';
-import type { ChatMessage, ChatSession, Report, Revision } from '../../../../shared/types';
+import type {
+  ChatMessage,
+  ChatSession,
+  PublicReport,
+  PublicRevision,
+} from '../../../../shared/types';
 import { buildReportRevisionPrompt } from '../../../../shared/prompts';
 import {
   planningOutputSchema,
@@ -49,14 +54,16 @@ import { parseStructuredOutput } from '../../../../shared/schemas/structured-out
 import { useAiTask } from '../../hooks/useAiTask';
 
 interface Props {
-  report: Report;
+  report: PublicReport;
   onRefresh: () => Promise<void>;
-  onChanged: (report: Report) => void;
+  onChanged: (report: PublicReport) => void;
   onRemoved: () => void;
 }
 interface Proposal {
   html: string;
   summary: string[];
+  assumptions: string[];
+  warnings: string[];
   baseHash: string;
 }
 export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props) {
@@ -68,18 +75,63 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
   const [session, setSession] = useState<ChatSession | null>(null);
   const [prompt, setPrompt] = useState('');
   const [proposal, setProposal] = useState<Proposal | null>(null);
-  const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [revisions, setRevisions] = useState<PublicRevision[]>([]);
+  const [syncConflict, setSyncConflict] = useState(false);
+  const syncConflictRef = useRef(false);
   const dirty = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+  const editorRef = useRef<NonNullable<ReturnType<typeof useEditor>> | null>(null);
+  const titleRef = useRef(title);
+  const layoutRef = useRef(layout);
+  const reportIdRef = useRef(report.id);
+  const lastSyncedHtmlRef = useRef(DOMPurify.sanitize(report.html));
+  const lastSyncedHashRef = useRef<string | null>(null);
+  const lastSyncedVersionRef = useRef(`${report.updatedAt}:${report.currentRevisionId ?? ''}`);
+  const syncGeneration = useRef(0);
+  const saveSequence = useRef(0);
+  const changeSequence = useRef(0);
+  const chatLoadSequence = useRef(0);
+  const reportGeneration = useRef(0);
+  const onChangedRef = useRef(onChanged);
+  const saveRef = useRef<() => Promise<PublicReport | undefined>>(async () => undefined);
+  const exportRef = useRef<() => Promise<void>>(async () => undefined);
   const ai = useAiTask();
   useEffect(() => {
-    void window.lgReportAgent.chats.list().then(async (chats) => {
-      const existing = chats.find((item) => item.kind === 'report' && item.reportId === report.id);
-      if (existing) {
+    titleRef.current = title;
+  }, [title]);
+  useEffect(() => {
+    layoutRef.current = layout;
+  }, [layout]);
+  useEffect(() => {
+    onChangedRef.current = onChanged;
+  }, [onChanged]);
+  useEffect(() => {
+    const sequence = ++chatLoadSequence.current;
+    void window.lgReportAgent.chats
+      .list()
+      .then(async (chats) => {
+        const existing = chats.find(
+          (item) => item.kind === 'report' && item.reportId === report.id,
+        );
+        if (!existing) {
+          if (sequence === chatLoadSequence.current) {
+            setSession(null);
+            setMessages([]);
+          }
+          return;
+        }
+        const nextMessages = await window.lgReportAgent.chats.messages(existing.id);
+        if (sequence !== chatLoadSequence.current) return;
         setSession(existing);
-        setMessages(await window.lgReportAgent.chats.messages(existing.id));
-      }
-    });
+        setMessages(nextMessages);
+      })
+      .catch(() => {
+        if (sequence === chatLoadSequence.current) setSession(null);
+      });
+    return () => {
+      chatLoadSequence.current += 1;
+    };
   }, [report.id]);
   const editor = useEditor({
     extensions: [
@@ -96,55 +148,119 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
     editorProps: { attributes: { 'aria-label': '보고서 편집기' } },
     onUpdate: () => {
       dirty.current = true;
+      changeSequence.current += 1;
+      if (syncConflictRef.current) return;
       setSaveState('saving');
       if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => void save(), 700);
+      timer.current = setTimeout(() => void saveRef.current(), 700);
     },
   });
-  const save = useCallback(async () => {
-    if (!editor) return;
-    setSaveState('saving');
-    try {
-      const updated = await window.lgReportAgent.reports.save({
-        id: report.id,
-        title: title.trim() || '제목 없는 보고서',
-        html: DOMPurify.sanitize(editor.getHTML()),
-        editorJson: editor.getJSON(),
-        layoutMode: layout,
-      });
-      dirty.current = false;
-      setSaveState('saved');
-      onChanged(updated);
-    } catch {
-      setSaveState('failed');
-    }
-  }, [editor, layout, onChanged, report.id, title]);
   useEffect(() => {
-    setTitle(report.title);
-    setLayout(report.layoutMode);
-    editor?.commands.setContent(DOMPurify.sanitize(report.html));
-  }, [report.id]);
+    editorRef.current = editor;
+  }, [editor]);
+  const save = useCallback(async (): Promise<PublicReport | undefined> => {
+    const currentEditor = editorRef.current;
+    if (!currentEditor) return undefined;
+    const requestSequence = ++saveSequence.current;
+    const requestChangeSequence = changeSequence.current;
+    const reportId = reportIdRef.current;
+    const html = DOMPurify.sanitize(currentEditor.getHTML());
+    const payload = {
+      id: reportId,
+      title: titleRef.current.trim() || '제목 없는 보고서',
+      html,
+      editorJson: currentEditor.getJSON(),
+      layoutMode: layoutRef.current,
+    };
+    if (mounted.current) setSaveState('saving');
+    try {
+      const updated = await window.lgReportAgent.reports.save(payload);
+      // A slower response must never overwrite the result of a newer save.
+      if (
+        !mounted.current ||
+        requestSequence !== saveSequence.current ||
+        reportIdRef.current !== reportId
+      )
+        return updated;
+      lastSyncedHtmlRef.current = html;
+      lastSyncedHashRef.current = await hash(html);
+      lastSyncedVersionRef.current = `${updated.updatedAt}:${updated.currentRevisionId ?? ''}`;
+      if (requestChangeSequence === changeSequence.current) {
+        dirty.current = false;
+        syncConflictRef.current = false;
+        setSyncConflict(false);
+      }
+      setSaveState('saved');
+      onChangedRef.current(updated);
+      return updated;
+    } catch {
+      if (mounted.current && requestSequence === saveSequence.current) setSaveState('failed');
+      return undefined;
+    }
+  }, []);
+  saveRef.current = save;
+  useEffect(() => {
+    if (reportIdRef.current !== report.id) reportGeneration.current += 1;
+    const incomingHtml = DOMPurify.sanitize(report.html);
+    const incomingVersion = `${report.updatedAt}:${report.currentRevisionId ?? ''}`;
+    const idChanged = reportIdRef.current !== report.id;
+    const generation = ++syncGeneration.current;
+    void hash(incomingHtml).then((incomingHash) => {
+      if (!mounted.current || generation !== syncGeneration.current) return;
+      const versionChanged = incomingVersion !== lastSyncedVersionRef.current;
+      const contentChanged =
+        versionChanged ||
+        incomingHash !== lastSyncedHashRef.current ||
+        incomingHtml !== lastSyncedHtmlRef.current;
+      if (contentChanged && dirty.current && !idChanged) {
+        syncConflictRef.current = true;
+        setSyncConflict(true);
+        return;
+      }
+      if (idChanged && dirty.current) {
+        if (timer.current) clearTimeout(timer.current);
+        // Capture the previous report before switching the editor to the new one.
+        void saveRef.current();
+      }
+      reportIdRef.current = report.id;
+      setTitle(report.title);
+      setLayout(report.layoutMode);
+      titleRef.current = report.title;
+      layoutRef.current = report.layoutMode;
+      if (contentChanged || idChanged) {
+        editorRef.current?.commands.setContent(incomingHtml, { emitUpdate: false });
+        dirty.current = false;
+        changeSequence.current += 1;
+      }
+      lastSyncedHtmlRef.current = incomingHtml;
+      lastSyncedHashRef.current = incomingHash;
+      lastSyncedVersionRef.current = incomingVersion;
+      syncConflictRef.current = false;
+      setSyncConflict(false);
+    });
+  }, [report, editor]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        void save();
+        void saveRef.current();
       }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'e') {
         event.preventDefault();
-        void exportHtml();
+        void exportRef.current();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [save]);
-  useEffect(
-    () => () => {
+  }, []);
+  useEffect(() => {
+    return () => {
+      mounted.current = false;
       if (timer.current) clearTimeout(timer.current);
-      if (dirty.current) void save();
-    },
-    [save],
-  );
+      // Flush the latest editor/title/layout refs even while React is unmounting.
+      if (dirty.current) void saveRef.current();
+    };
+  }, []);
   const ensureSession = async (): Promise<ChatSession> => {
     if (session) return session;
     const created = await window.lgReportAgent.chats.create(`${title} AI 수정`, report.id);
@@ -153,6 +269,7 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
   };
   const requestRevision = async (request = prompt) => {
     if (!editor || !request.trim() || ai.running) return;
+    const targetGeneration = reportGeneration.current;
     const current = DOMPurify.sanitize(editor.getHTML());
     const baseHash = await hash(current);
     const sources = await window.lgReportAgent.sources.list(report.id);
@@ -171,7 +288,7 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
     setPrompt('');
     try {
       const raw = await ai.run({
-        sessionType: 'report',
+        intent: 'revise',
         sessionId: chat.id,
         prompt: buildReportRevisionPrompt({
           request,
@@ -188,35 +305,11 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
           ),
         }),
         displayText: request,
-        cwd:
-          report.contentPath.replace(/[\\/]report\.html$/, '') +
-          `${navigator.userAgent.includes('Windows') ? '\\' : '/'}agent-work`,
-        threadId: chat.codexThreadId,
         model: report.outputOptions.model,
         effort: report.outputOptions.reasoningEffort,
-        outputSchema: {
-          type: 'object',
-          required: [
-            'scope',
-            'updatedHtml',
-            'replacementHtml',
-            'changeSummary',
-            'assumptions',
-            'warnings',
-          ],
-          properties: {
-            scope: { enum: ['document', 'selection'] },
-            updatedHtml: { type: 'string' },
-            replacementHtml: { type: ['string', 'null'] },
-            changeSummary: { type: 'array', items: { type: 'string' } },
-            assumptions: { type: 'array', items: { type: 'string' } },
-            warnings: { type: 'array', items: { type: 'string' } },
-          },
-          additionalProperties: false,
-        },
-        writable: true,
       });
       const parsed = parseStructuredOutput(raw, revisionOutputSchema);
+      if (targetGeneration !== reportGeneration.current) return;
       const html = DOMPurify.sanitize(parsed.updatedHtml, {
         FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
         FORBID_ATTR: ['style'],
@@ -225,6 +318,8 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
       setProposal({
         html,
         summary: summaries,
+        assumptions: parsed.assumptions,
+        warnings: parsed.warnings,
         baseHash,
       });
       setMessages((items) => [
@@ -239,6 +334,7 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
         },
       ]);
     } catch (error) {
+      if (targetGeneration !== reportGeneration.current) return;
       setMessages((items) => [
         ...items,
         {
@@ -266,15 +362,53 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
     setProposal(null);
     await onRefresh();
   };
-  const exportHtml = async () => {
-    await save();
-    const target = await window.lgReportAgent.reports.export(report.id);
-    if (target) alert(`HTML을 내보냈습니다.\n${target}`);
+  const restoreRevision = async (revisionId: string) => {
+    const targetReportId = report.id;
+    const targetGeneration = reportGeneration.current;
+    if (dirty.current) {
+      const proceed = confirm(
+        '저장되지 않은 편집 내용이 있습니다. 현재 내용을 버리고 복원하시겠습니까?',
+      );
+      if (!proceed) return;
+    }
+    const restored = await window.lgReportAgent.revisions.restore(report.id, revisionId);
+    if (targetGeneration !== reportGeneration.current || reportIdRef.current !== targetReportId)
+      return;
+    const restoredHtml = DOMPurify.sanitize(restored.html);
+    editor?.commands.setContent(restoredHtml, { emitUpdate: false });
+    dirty.current = false;
+    changeSequence.current += 1;
+    lastSyncedHtmlRef.current = restoredHtml;
+    lastSyncedHashRef.current = await hash(restoredHtml);
+    lastSyncedVersionRef.current = `${restored.updatedAt}:${restored.currentRevisionId ?? ''}`;
+    setSyncConflict(false);
+    syncConflictRef.current = false;
+    setSaveState('saved');
+    onChanged(restored);
+    setRevisions([]);
   };
+  const exportReport = async (format: 'html' | 'pdf') => {
+    await save();
+    const preflight = await window.lgReportAgent.reports.exportPreflight(report.id, format);
+    if (preflight.warnings.length > 0) {
+      const details = preflight.warnings.map((warning) => `· ${warning.message}`).join('\n');
+      if (!confirm(`내보내기 전 확인이 필요합니다.\n${details}\n\n계속하시겠습니까?`)) return;
+    }
+    const target = await window.lgReportAgent.reports.export(
+      report.id,
+      format,
+      preflight.reservationToken,
+    );
+    if (target) alert(`${format.toUpperCase()}을 내보냈습니다.\n${target}`);
+  };
+  const exportHtml = () => exportReport('html');
+  exportRef.current = exportHtml;
   const addImage = async () => {
-    const paths = await window.lgReportAgent.sources.choose();
-    if (!paths[0]) return;
-    const entries = await window.lgReportAgent.sources.import(report.id, [paths[0]]);
+    const selections = await window.lgReportAgent.sources.choose();
+    if (!selections[0]) return;
+    const entries = await window.lgReportAgent.sources.import(report.id, [
+      selections[0].selectionId,
+    ]);
     const src = entries[0]?.metadata.editorSrc;
     if (typeof src === 'string')
       editor
@@ -294,10 +428,12 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
             value={title}
             onChange={(e) => {
               setTitle(e.target.value);
+              titleRef.current = e.target.value;
               dirty.current = true;
+              changeSequence.current += 1;
               setSaveState('saving');
             }}
-            onBlur={() => void save()}
+            onBlur={() => void saveRef.current()}
           />
           <button
             className="button icon"
@@ -309,15 +445,24 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
           >
             <Star size={17} fill={report.isFavorite ? 'currentColor' : 'none'} />
           </button>
-          <span className={`status ${saveState === 'failed' ? 'error' : ''}`}>
+          <span
+            className={`status ${saveState === 'failed' ? 'error' : ''}`}
+            role="status"
+            aria-live="polite"
+          >
             {saveState === 'saved' ? '저장됨' : saveState === 'saving' ? '저장 중…' : '저장 실패'}
           </span>
           <div className="spacer" />
           <button
             className="button"
             onClick={() => {
-              setLayout((value) => (value === 'a4' ? 'web' : 'a4'));
+              const nextLayout = layout === 'a4' ? 'web' : 'a4';
+              setLayout(nextLayout);
+              layoutRef.current = nextLayout;
               dirty.current = true;
+              changeSequence.current += 1;
+              if (timer.current) clearTimeout(timer.current);
+              timer.current = setTimeout(() => void saveRef.current(), 700);
             }}
           >
             {layout === 'a4' ? 'A4' : 'Web'}
@@ -345,6 +490,14 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
           <button className="button" aria-label="HTML 내보내기" onClick={() => void exportHtml()}>
             <Download size={15} />
             <span className="button-label">HTML</span>
+          </button>
+          <button
+            className="button"
+            aria-label="PDF 내보내기"
+            onClick={() => void exportReport('pdf')}
+          >
+            <Download size={15} />
+            <span className="button-label">PDF</span>
           </button>
           <button
             className="button icon"
@@ -400,6 +553,36 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
           </button>
         </div>
         <EditorToolbar editor={editor} onImage={addImage} />
+        {syncConflict && (
+          <div className="error-box" role="alert">
+            다른 변경 사항이 감지되어 현재 편집 내용을 유지했습니다. 저장하거나 새로고침 후 다시
+            확인하세요.
+          </div>
+        )}
+        {report.latestGeneration &&
+          (report.latestGeneration.assumptions.length > 0 ||
+            report.latestGeneration.warnings.length > 0) && (
+            <div className="notice" role="note" aria-label="AI 생성 검토 정보">
+              <strong>AI 생성 검토 정보</strong>
+              {report.latestGeneration.executiveSummary && (
+                <div>임원 요약: {report.latestGeneration.executiveSummary}</div>
+              )}
+              {report.latestGeneration.assumptions.length > 0 && (
+                <div>가정: {report.latestGeneration.assumptions.join(' · ')}</div>
+              )}
+              {report.latestGeneration.warnings.length > 0 && (
+                <div>주의: {report.latestGeneration.warnings.join(' · ')}</div>
+              )}
+              {report.latestGeneration.claimEvidence.length > 0 && (
+                <div>
+                  근거 연결:{' '}
+                  {report.latestGeneration.claimEvidence
+                    .map((entry) => `${entry.claim} → ${entry.sourceId} (${entry.locator})`)
+                    .join(' · ')}
+                </div>
+              )}
+            </div>
+          )}
         {revisions.length > 0 && (
           <div className="notice">
             버전 이력 {revisions.length}개{' '}
@@ -410,14 +593,7 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
               <button
                 className="button"
                 key={revision.id}
-                onClick={async () => {
-                  const restored = await window.lgReportAgent.revisions.restore(
-                    report.id,
-                    revision.id,
-                  );
-                  onChanged(restored);
-                  setRevisions([]);
-                }}
+                onClick={() => void restoreRevision(revision.id)}
               >
                 복원 · {new Date(revision.createdAt).toLocaleString()}
               </button>
@@ -464,6 +640,12 @@ export function ReportEditor({ report, onRefresh, onChanged, onRemoved }: Props)
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
+                {proposal.assumptions.length > 0 && (
+                  <div className="muted">가정: {proposal.assumptions.join(' · ')}</div>
+                )}
+                {proposal.warnings.length > 0 && (
+                  <div className="warning">주의: {proposal.warnings.join(' · ')}</div>
+                )}
                 <div className="diff-preview">
                   {diffWords(editor.getHTML(), proposal.html).map((part, index) => (
                     <span

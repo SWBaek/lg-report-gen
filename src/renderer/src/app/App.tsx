@@ -1,29 +1,78 @@
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useRef, useState } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 import { FileText } from 'lucide-react';
-import type { BootstrapState, ChatSession, Report } from '../../../shared/types';
+import type { BootstrapState, ChatSession, PublicReport } from '../../../shared/types';
 import { Sidebar } from '../components/Sidebar';
 import { ReportEditor } from '../features/reports/ReportEditor';
 import { NewReportWizard } from '../features/reports/NewReportWizard';
 import { ChatView } from '../features/chat/ChatView';
 import { SettingsView } from '../features/settings/SettingsView';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 type View = 'home' | 'report' | 'chat' | 'settings' | 'trash';
 export function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
+  );
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // Keep the error boundary deliberately quiet: report/source content must not be logged.
+    void error;
+    void info;
+  }
+
+  render() {
+    if (this.state.error)
+      return (
+        <div className="empty" role="alert">
+          <h2>화면을 표시하지 못했습니다.</h2>
+          <p>일시적인 오류일 수 있습니다. 다시 시도해 주세요.</p>
+          <button className="primary" onClick={() => this.setState({ error: null })}>
+            다시 시도
+          </button>
+        </div>
+      );
+    return this.props.children;
+  }
+}
+
+function AppContent() {
   const [state, setState] = useState<BootstrapState | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [view, setView] = useState<View>('home');
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [report, setReport] = useState<Report | null>(null);
+  const [report, setReport] = useState<PublicReport | null>(null);
   const [chat, setChat] = useState<ChatSession | null>(null);
   const [wizard, setWizard] = useState(false);
   const [prefill, setPrefill] = useState<string | undefined>();
   const [query, setQuery] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const reportRequestSeq = useRef(0);
   const reload = async () => {
-    const next = await window.lgReportAgent.bootstrap.get();
-    setState(next);
-    return next;
+    setBootstrapError(null);
+    try {
+      const next = await window.lgReportAgent.bootstrap.get();
+      setState(next);
+      return next;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '애플리케이션을 준비하지 못했습니다.';
+      setBootstrapError(message);
+      throw error;
+    }
   };
   useEffect(() => {
-    void reload();
+    void reload().catch(() => undefined);
   }, []);
   useEffect(
     () =>
@@ -45,18 +94,29 @@ export function App() {
         document.querySelector<HTMLInputElement>('.search')?.focus();
       }
       if (event.key === 'Escape') {
-        setWizard(false);
+        if (!wizard) setWizard(false);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [state]);
+  }, [state, wizard]);
   const openReport = async (id: string) => {
-    setReport(await window.lgReportAgent.reports.get(id));
+    const request = ++reportRequestSeq.current;
+    try {
+      const next = await window.lgReportAgent.reports.get(id);
+      if (request !== reportRequestSeq.current) return;
+      setReport(next);
+    } catch (error) {
+      if (request === reportRequestSeq.current)
+        setBootstrapError(error instanceof Error ? error.message : '보고서를 열지 못했습니다.');
+      return;
+    }
+    if (request !== reportRequestSeq.current) return;
     setActiveId(id);
     setView('report');
   };
   const openChat = (id: string) => {
+    ++reportRequestSeq.current;
     const target = state?.chats.find((item) => item.id === id);
     if (target) {
       setChat(target);
@@ -66,13 +126,24 @@ export function App() {
   };
   const newChat = async () => {
     if (!state) return;
+    ++reportRequestSeq.current;
     const created = await window.lgReportAgent.chats.create();
     await reload();
     setChat(created);
     setActiveId(created.id);
     setView('chat');
   };
-  if (!state) return <div className="empty">애플리케이션을 준비하고 있습니다.</div>;
+  if (!state)
+    return (
+      <div className="empty" role={bootstrapError ? 'alert' : undefined}>
+        <p>{bootstrapError ?? '애플리케이션을 준비하고 있습니다.'}</p>
+        {bootstrapError && (
+          <button className="primary" onClick={() => void reload().catch(() => undefined)}>
+            다시 시도
+          </button>
+        )}
+      </div>
+    );
   if (!state.consentAccepted)
     return (
       <Consent
@@ -92,6 +163,14 @@ export function App() {
     );
   return (
     <div className="app">
+      {bootstrapError && (
+        <div className="error-box" role="alert">
+          동기화에 실패했습니다. {bootstrapError}{' '}
+          <button className="button" onClick={() => void reload().catch(() => undefined)}>
+            다시 시도
+          </button>
+        </div>
+      )}
       <Sidebar
         reports={state.reports}
         chats={state.chats}
@@ -102,19 +181,35 @@ export function App() {
         onReport={(id) => void openReport(id)}
         onChat={openChat}
         onNewReport={() => {
+          ++reportRequestSeq.current;
           setPrefill(undefined);
           setWizard(true);
         }}
-        onNewChat={() => void newChat()}
+        onNewChat={() => {
+          void newChat();
+        }}
         onSettings={() => {
+          ++reportRequestSeq.current;
           setActiveId(null);
           setView('settings');
         }}
         onTrash={() => {
+          ++reportRequestSeq.current;
           setActiveId(null);
           setView('trash');
         }}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
+      {!sidebarOpen && (
+        <button
+          className="sidebar-open button icon"
+          aria-label="탐색 메뉴 열기"
+          onClick={() => setSidebarOpen(true)}
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
+      )}
       <main className="main">
         {view === 'report' && report ? (
           <ReportEditor
@@ -152,7 +247,12 @@ export function App() {
         ) : view === 'trash' ? (
           <TrashView onChanged={() => void reload()} />
         ) : (
-          <Home onNew={() => setWizard(true)} />
+          <Home
+            onNew={() => {
+              ++reportRequestSeq.current;
+              setWizard(true);
+            }}
+          />
         )}
       </main>
       {wizard && (
@@ -239,12 +339,19 @@ function TrashView({ onChanged }: { onChanged: () => void }) {
   const [items, setItems] = useState<Awaited<ReturnType<typeof window.lgReportAgent.reports.list>>>(
     [],
   );
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
   useEffect(() => {
     void window.lgReportAgent.reports.list({ includeDeleted: true }).then(setItems);
   }, []);
   return (
     <div className="settings">
       <h1>휴지통</h1>
+      {deleteNotice && (
+        <div className="notice" role="status">
+          {deleteNotice}
+        </div>
+      )}
       {items.length === 0 ? (
         <div className="empty">
           <h2>휴지통이 비었습니다.</h2>
@@ -266,27 +373,30 @@ function TrashView({ onChanged }: { onChanged: () => void }) {
             >
               복원
             </button>
-            <button
-              className="button danger"
-              onClick={async () => {
-                if (
-                  confirm(
-                    '영구 삭제하면 보고서 파일과 로컬 기록을 복구할 수 없습니다. 계속하시겠습니까?',
-                  )
-                ) {
-                  const result = await window.lgReportAgent.reports.delete(item.id);
-                  setItems(items.filter((v) => v.id !== item.id));
-                  onChanged();
-                  if (result.threadDeleteFailed)
-                    alert('로컬 보고서는 삭제했지만 Codex Thread 삭제에는 실패했습니다.');
-                }
-              }}
-            >
+            <button className="button danger" onClick={() => setPendingDelete(item.id)}>
               영구 삭제
             </button>
           </div>
         ))
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="보고서 영구 삭제"
+        description="영구 삭제하면 보고서 파일과 로컬 기록을 복구할 수 없습니다. 계속하시겠습니까?"
+        confirmLabel="영구 삭제"
+        danger
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={async () => {
+          if (!pendingDelete) return;
+          const result = await window.lgReportAgent.reports.delete(pendingDelete);
+          setItems((current) => current.filter((v) => v.id !== pendingDelete));
+          setPendingDelete(null);
+          onChanged();
+          if (result.threadDeleteFailed) {
+            setDeleteNotice('로컬 보고서는 삭제했지만 Codex Thread 삭제에는 실패했습니다.');
+          }
+        }}
+      />
     </div>
   );
 }

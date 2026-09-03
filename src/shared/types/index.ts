@@ -58,7 +58,15 @@ export interface Report extends ReportSummary {
   codexThreadId: string | null;
   html: string;
   editorJson: unknown;
+  /** SHA-256 of the sanitized HTML projection of the canonical editor JSON. */
+  htmlProjectionHash: string;
+  /** Version of the Tiptap document envelope stored on disk. */
+  canonicalSchemaVersion: number;
+  /** Most recent AI generation provenance, if this report was AI generated. */
+  latestGeneration: ReportGenerationRecord | null;
 }
+/** Renderer-facing report shape; filesystem locations stay in Main. */
+export type PublicReport = Omit<Report, 'contentPath' | 'editorStatePath'>;
 export interface Revision {
   id: string;
   reportId: string;
@@ -67,7 +75,19 @@ export interface Revision {
   description: string;
   baseContentHash: string;
   createdAt: string;
+  /** Versioned snapshot envelope metadata. */
+  schemaVersion: number;
+  editorJson: unknown;
+  html: string;
+  title: string;
+  purpose: string;
+  outputOptions: ReportOutputOptions;
+  layoutMode: 'a4' | 'web';
+  htmlProjectionHash: string;
+  editorJsonHash: string;
 }
+/** Renderer-facing revision shape; snapshots are internal files. */
+export type PublicRevision = Omit<Revision, 'snapshotPath'>;
 export interface Persona {
   id: string;
   name: string;
@@ -90,6 +110,48 @@ export interface SourceManifestEntry {
   metadata: Record<string, unknown>;
   warnings: string[];
   createdAt: string;
+}
+/** Renderer-facing source shape; imported file locations stay in Main. */
+export type PublicSourceManifestEntry = Omit<SourceManifestEntry, 'storedPath' | 'extractedPath'>;
+export interface SourceSelection {
+  selectionId: string;
+  originalName: string;
+}
+export interface SourceUsage {
+  sourceId: string;
+  locator: string;
+  claimSummary: string;
+}
+export interface ClaimEvidence {
+  claim: string;
+  sourceId: string;
+  locator: string;
+  evidenceExcerpt?: string | undefined;
+}
+export interface ReportGenerationRecord {
+  id: string;
+  reportId: string;
+  schemaVersion: number;
+  executiveSummary: string;
+  sourceUsage: SourceUsage[];
+  assumptions: string[];
+  warnings: string[];
+  model: string | null;
+  promptVersion: string;
+  sourceSnapshotHashes: Record<string, string>;
+  claimEvidence: ClaimEvidence[];
+  createdAt: string;
+}
+export interface DeletionRetention {
+  id: string;
+  ownerType: 'report' | 'chat';
+  ownerId: string;
+  codexThreadIds: string[];
+  pendingThreadIds: string[];
+  localState: 'deleted' | 'failed';
+  codexState: 'deleted' | 'pending' | 'none';
+  createdAt: string;
+  updatedAt: string;
 }
 export interface ChatSession {
   id: string;

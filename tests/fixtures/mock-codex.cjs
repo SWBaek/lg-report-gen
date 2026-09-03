@@ -1,9 +1,14 @@
+#!/usr/bin/env node
 const readline = require('node:readline');
+const fs = require('node:fs');
 if (process.argv.includes('--version')) {
   process.stdout.write('codex-cli 99.0.0-test\n');
   process.exit(0);
 }
 let thread = 0;
+let turn = 0;
+let overloadSent = false;
+const mode = process.env.MOCK_CODEX_MODE || 'normal';
 const rl = readline.createInterface({ input: process.stdin });
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 rl.on('line', (line) => {
@@ -15,7 +20,15 @@ rl.on('line', (line) => {
   }
   if (message.method === 'initialized') return;
   const { id, method, params } = message;
-  if (method === 'initialize') send({ id, result: { serverInfo: { name: 'mock' } } });
+  if (method === 'initialize')
+    send({
+      id,
+      result: {
+        serverInfo: { name: 'mock', version: '99.0.0-test', protocolVersion: 'v1' },
+        protocolVersion: 'v1',
+        features: { structuredOutput: true, threadResume: true, turnInterrupt: true },
+      },
+    });
   else if (method === 'account/read')
     send({
       id,
@@ -62,12 +75,21 @@ rl.on('line', (line) => {
     });
   else if (method === 'thread/start')
     send({ id, result: { thread: { id: `thread-${++thread}` } } });
+  else if (method === 'thread/resume')
+    send({ id, result: { thread: { id: params?.threadId || `thread-${++thread}` } } });
   else if (method === 'turn/start') {
-    const turnId = 'turn-1';
+    if (mode === 'overload-once' && !overloadSent) {
+      overloadSent = true;
+      send({ id, error: { code: -32001, message: 'Server is overloaded' } });
+      return;
+    }
+    const turnId = `turn-${++turn}`;
+    const threadId = params?.threadId || `thread-${thread}`;
     const properties = params?.outputSchema?.properties ?? {};
     const structured = Boolean(params?.outputSchema);
     const response = properties.suggestedTitle
       ? JSON.stringify({
+          schemaVersion: 1,
           suggestedTitle: 'E2E 검증 보고서',
           purpose: '자동화 검증',
           executiveSummaryDirection: '결론 우선',
@@ -86,6 +108,7 @@ rl.on('line', (line) => {
         })
       : properties.htmlBody
         ? JSON.stringify({
+            schemaVersion: 1,
             title: 'E2E 검증 보고서',
             htmlBody: `<h1>E2E 검증 보고서</h1><blockquote><p>안전하게 생성된 본문</p></blockquote><h2>검증 결과</h2><p>선택한 AI 설정과 주요 결과를 요약합니다.</p><table><thead><tr><th>항목</th><th>결과</th></tr></thead><tbody><tr><td>모델 및 Reasoning</td><td>${params.model} · ${params.effort}</td></tr><tr><td>HTML 안전성</td><td>통과</td></tr></tbody></table><h3>후속 조치</h3><ul><li>내보낸 문서의 화면 및 인쇄 레이아웃을 확인합니다.</li><li>근거가 부족한 항목은 확인 필요로 표시합니다.</li></ul>`,
             executiveSummary: '안전하게 생성된 본문',
@@ -95,6 +118,7 @@ rl.on('line', (line) => {
           })
         : properties.updatedHtml
           ? JSON.stringify({
+              schemaVersion: 1,
               scope: 'document',
               updatedHtml: '<p>수정된 본문</p>',
               replacementHtml: null,
@@ -102,32 +126,70 @@ rl.on('line', (line) => {
               assumptions: [],
               warnings: [],
             })
-          : '안전한 응답';
+          : mode === 'malformed-structured'
+            ? '{invalid structured output'
+            : '안전한 응답';
     const commentary = structured ? '{"progress":"draft"}' : null;
     send({ id, result: { turn: { id: turnId } } });
+    if (mode === 'turn-failed-schema') {
+      send({
+        method: 'turn/completed',
+        params: {
+          threadId,
+          turn: {
+            id: turnId,
+            status: 'failed',
+            items: [],
+            error: { message: '{"code":"invalid_json_schema"}', codexErrorInfo: 'badRequest' },
+          },
+        },
+      });
+      return;
+    }
+    if (mode === 'fast')
+      send({
+        method: 'turn/completed',
+        params: {
+          threadId,
+          turn: {
+            id: turnId,
+            status: 'completed',
+            items: [{ type: 'agentMessage', text: response, phase: 'final_answer' }],
+            error: null,
+          },
+        },
+      });
+    const crashMarker = process.env.MOCK_CODEX_CRASH_MARKER;
+    const crashOnce = mode === 'crash-once' && crashMarker && !fs.existsSync(crashMarker);
+    if (crashOnce && crashMarker) fs.writeFileSync(crashMarker, 'crashed');
+    if (mode === 'crash' || crashOnce) {
+      setTimeout(() => process.kill(process.pid, 'SIGTERM'), 5);
+      return;
+    }
     if (commentary) {
       send({
         method: 'item/started',
         params: {
-          threadId: 'thread-1',
+          threadId,
           turnId,
           item: { id: 'commentary-1', type: 'agentMessage', text: '', phase: 'commentary' },
         },
       });
       send({
         method: 'item/agentMessage/delta',
-        params: { threadId: 'thread-1', turnId, itemId: 'commentary-1', delta: commentary },
+        params: { threadId, turnId, itemId: 'commentary-1', delta: commentary },
       });
     }
     const firstDelay = structured ? 80 : 5;
     const secondDelay = structured ? 160 : 10;
-    const completeDelay = structured ? 500 : 15;
+    const completeDelay =
+      mode === 'malformed-structured' ? 0 : structured ? 500 : mode === 'fast' ? 0 : 15;
     setTimeout(
       () =>
         send({
           method: 'item/agentMessage/delta',
           params: {
-            threadId: 'thread-1',
+            threadId,
             turnId,
             itemId: 'item-1',
             delta: response.slice(0, Math.ceil(response.length / 2)),
@@ -140,7 +202,7 @@ rl.on('line', (line) => {
         send({
           method: 'item/agentMessage/delta',
           params: {
-            threadId: 'thread-1',
+            threadId,
             turnId,
             itemId: 'item-1',
             delta: response.slice(Math.ceil(response.length / 2)),
@@ -150,32 +212,69 @@ rl.on('line', (line) => {
     );
     setTimeout(
       () =>
-        send({
-          method: 'turn/completed',
-          params: {
-            threadId: 'thread-1',
-            turn: {
-              id: turnId,
-              status: 'completed',
-              items: [
-                ...(commentary
-                  ? [
-                      {
-                        id: 'commentary-1',
-                        type: 'agentMessage',
-                        text: commentary,
-                        phase: 'commentary',
-                      },
-                    ]
-                  : []),
-                { id: 'item-1', type: 'agentMessage', text: response, phase: 'final_answer' },
-              ],
-              error: null,
-            },
-          },
-        }),
-      completeDelay,
+        send(
+          mode === 'malformed-completion'
+            ? {
+                method: 'turn/completed',
+                params: { threadId, turn: { id: turnId, status: 'completed' } },
+              }
+            : {
+                method: 'turn/completed',
+                params: {
+                  threadId,
+                  turn: {
+                    id: turnId,
+                    status: 'completed',
+                    items: [
+                      ...(commentary
+                        ? [
+                            {
+                              id: 'commentary-1',
+                              type: 'agentMessage',
+                              text: commentary,
+                              phase: 'commentary',
+                            },
+                          ]
+                        : []),
+                      { id: 'item-1', type: 'agentMessage', text: response, phase: 'final_answer' },
+                    ],
+                    error: null,
+                  },
+                },
+              },
+        ),
+      mode === 'cancel-late' ? 120 : completeDelay,
     );
+    if (mode === 'out-of-order') {
+      send({
+        method: 'item/agentMessage/delta',
+        params: { threadId: 'other-thread', turnId: 'other-turn', delta: '무시' },
+      });
+      send({
+        method: 'turn/completed',
+        params: {
+          threadId: 'other-thread',
+          turn: { id: 'other-turn', status: 'completed', items: [] },
+        },
+      });
+    }
+    if (mode === 'duplicate') {
+      setTimeout(
+        () =>
+          send({
+            method: 'turn/completed',
+            params: {
+              threadId,
+              turn: {
+                id: turnId,
+                status: 'completed',
+                items: [{ type: 'agentMessage', text: response, phase: 'final_answer' }],
+              },
+            },
+          }),
+        (mode === 'cancel-late' ? 120 : completeDelay) + 10,
+      );
+    }
   } else if (method === 'turn/interrupt' || method === 'thread/delete') send({ id, result: {} });
   else if (method === 'account/login/start')
     send({

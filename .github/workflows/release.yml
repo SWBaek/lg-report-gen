@@ -6,7 +6,9 @@ on:
       - 'v*'
 
 permissions:
+  attestations: write
   contents: write
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -18,10 +20,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout tagged source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '24'
           cache: npm
@@ -37,6 +39,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Enforce release signing policy
+        env:
+          RELEASE_SIGNING_REQUIRED: ${{ vars.RELEASE_SIGNING_REQUIRED || 'true' }}
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: npm run check:release-signing
+
       - name: Run source checks
         run: npm run check
 
@@ -45,6 +54,10 @@ jobs:
 
       - name: Build Windows packages
         run: npm run build:win
+        env:
+          RELEASE_SIGNING_REQUIRED: ${{ vars.RELEASE_SIGNING_REQUIRED || 'true' }}
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
       - name: Test packaged application
         shell: pwsh
@@ -52,25 +65,42 @@ jobs:
           $env:PACKAGED_APP_PATH = (Get-Content -LiteralPath 'artifacts/latest-packaged-path.txt' -Raw).Trim()
           npm run test:e2e:packaged
 
+      - name: Verify release signatures
+        env:
+          RELEASE_SIGNING_REQUIRED: ${{ vars.RELEASE_SIGNING_REQUIRED || 'true' }}
+        run: npm run verify:release-signatures
+
+      - name: Generate SBOM and production license bundle
+        run: npm run release:metadata
+
       - name: Create SHA-256 checksums
-        shell: pwsh
-        run: |
-          $lines = Get-ChildItem -LiteralPath release -Filter '*.exe' |
-            Sort-Object Name |
-            ForEach-Object {
-              $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-              "$hash  $($_.Name)"
-            }
-          $lines | Set-Content -LiteralPath 'release/SHA256SUMS.txt' -Encoding utf8NoBOM
+        run: npm run release:checksums
+
+      - name: Verify release checksums
+        run: npm run release:verify
+
+      - name: Attest release provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            release/*.exe
+            release/SHA256SUMS.txt
+            artifacts/sbom/*.json
+            artifacts/licenses/THIRD_PARTY_NOTICES.md
 
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SIGNING_REQUIRED: ${{ vars.RELEASE_SIGNING_REQUIRED || 'true' }}
         run: |
           $tag = $env:GITHUB_REF_NAME
           $assets = @(Get-ChildItem -LiteralPath release -Filter '*.exe' | ForEach-Object FullName)
           $assets += (Resolve-Path 'release/SHA256SUMS.txt').Path
+          $assets += @(Get-ChildItem -LiteralPath artifacts/sbom -Filter '*.json' | ForEach-Object FullName)
+          $assets += (Resolve-Path 'artifacts/licenses/THIRD_PARTY_NOTICES.md').Path
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists; releases are immutable." }
           $notes = @"
           Windows 10/11 x64용 LG Report Agent입니다.
 
@@ -80,4 +110,7 @@ jobs:
           - 현재 빌드는 코드 서명되지 않아 Windows SmartScreen 경고가 표시될 수 있습니다.
           - 공식 LG 템플릿·로고·CI 자산은 포함하지 않습니다.
           "@
+          if ($env:RELEASE_SIGNING_REQUIRED -eq 'true') {
+            $notes = $notes.Replace('현재 빌드는 코드 서명되지 않아 Windows SmartScreen 경고가 표시될 수 있습니다.', 'Windows Authenticode 서명이 적용된 빌드입니다.')
+          }
           gh release create $tag @assets --verify-tag --title "LG Report Agent $tag" --generate-notes --notes $notes

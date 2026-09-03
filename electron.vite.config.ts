@@ -21,7 +21,17 @@ const mainRuntimeAssetsPlugin: Plugin = {
 };
 
 export default defineConfig({
-  main: { plugins: [externalizeDepsPlugin(), mainRuntimeAssetsPlugin] },
+  main: {
+    plugins: [externalizeDepsPlugin(), mainRuntimeAssetsPlugin],
+    build: {
+      rollupOptions: {
+        input: {
+          index: path.resolve('src/main/index.ts'),
+          'parser-worker': path.resolve('src/main/importers/parser-worker.ts'),
+        },
+      },
+    },
+  },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {

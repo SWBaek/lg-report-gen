@@ -3,6 +3,18 @@ export interface ExportDocumentInput {
   body: string;
   fontBase64: string;
   a4: boolean;
+  metadata?: ExportMetadata;
+}
+
+export interface ExportMetadata {
+  lang?: 'ko' | 'en' | 'bilingual';
+  author?: string;
+  date?: string;
+  revision?: string;
+  classification?: string;
+  header?: string;
+  footer?: string;
+  pageNumber?: boolean;
 }
 
 export function buildReportDocument(input: ExportDocumentInput): string {
@@ -15,8 +27,19 @@ export function buildReportDocument(input: ExportDocumentInput): string {
   const pageSize = input.a4 ? 'A4 portrait' : 'auto';
   const pageMargin = input.a4 ? '16mm' : '12mm';
 
+  const metadata = input.metadata ?? {};
+  const lang = metadata.lang === 'en' ? 'en' : 'ko';
+  const metaLine = [metadata.author, metadata.date, metadata.revision, metadata.classification]
+    .filter(Boolean)
+    .map((value) => escapeText(String(value)))
+    .join(' · ');
+  const header = metadata.header
+    ? `<header class="report-header">${escapeText(metadata.header)}</header>`
+    : '';
+  const footerText = metadata.footer ?? 'LG Report Agent';
+  const footer = `<footer class="report-footer"><span>${escapeText(footerText)}</span>${metadata.pageNumber === false ? '' : '<span class="page-number"></span>'}</footer>`;
   return `<!doctype html>
-<html lang="ko" data-layout="${input.a4 ? 'a4' : 'web'}">
+<html lang="${lang}" data-layout="${input.a4 ? 'a4' : 'web'}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -78,6 +101,15 @@ export function buildReportDocument(input: ExportDocumentInput): string {
       font-size: 10.5pt;
       letter-spacing: -0.012em;
     }
+    .report-header, .report-footer {
+      color: var(--report-muted);
+      font-size: 8.5pt;
+      letter-spacing: -0.01em;
+    }
+    .report-meta { margin: 0 0 16px; color: var(--report-muted); font-size: 8.5pt; }
+    .report-header { margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--report-border); }
+    .report-footer { display: flex; justify-content: space-between; margin-top: 22px; padding-top: 8px; border-top: 1px solid var(--report-border); }
+    .page-number::after { content: 'Page ' counter(page); }
     h1, h2, h3, h4 {
       color: var(--report-ink);
       font-weight: 700;
@@ -253,7 +285,10 @@ export function buildReportDocument(input: ExportDocumentInput): string {
 </head>
 <body>
   <main class="report-sheet">
+    ${header}
+    ${metaLine ? `<div class="report-meta">${metaLine}</div>` : ''}
     <article class="report-content">${body}</article>
+    ${footer}
   </main>
 </body>
 </html>`;

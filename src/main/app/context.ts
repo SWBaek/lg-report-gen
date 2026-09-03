@@ -3,8 +3,9 @@ import path from 'node:path';
 import { AppDatabase } from '../database/database.js';
 import { CodexAppServerManager } from '../codex/app-server-manager.js';
 import { SourceImporter } from '../importers/source-importer.js';
-import { atomicWrite, readJson } from '../services/files.js';
+import { atomicWrite, readJsonOrQuarantine } from '../services/files.js';
 import { ensureWorkspace, type WorkspacePaths } from '../workspace/manager.js';
+import { z } from 'zod';
 
 interface BootstrapPreferences {
   workspacePath: string | null;
@@ -20,6 +21,20 @@ const DEFAULTS: BootstrapPreferences = {
   windowBounds: { width: 1440, height: 900 },
   sandboxMode: 'workspace-write',
 };
+const bootstrapPreferencesSchema = z
+  .object({
+    workspacePath: z.string().nullable(),
+    consentAccepted: z.boolean(),
+    codexExecutablePath: z.string().nullable(),
+    windowBounds: z.object({
+      x: z.number().optional(),
+      y: z.number().optional(),
+      width: z.number(),
+      height: z.number(),
+    }),
+    sandboxMode: z.enum(['workspace-write', 'read-only']),
+  })
+  .partial();
 
 export class ApplicationContext {
   database: AppDatabase | null = null;
@@ -32,10 +47,12 @@ export class ApplicationContext {
     return path.join(app.getPath('userData'), 'bootstrap.json');
   }
   async initialize(): Promise<void> {
-    this.preferences = {
-      ...DEFAULTS,
-      ...(await readJson<Partial<BootstrapPreferences>>(this.preferencePath, {})),
-    };
+    const stored = await readJsonOrQuarantine<Partial<BootstrapPreferences>>(
+      this.preferencePath,
+      {},
+      (value) => bootstrapPreferencesSchema.parse(value) as Partial<BootstrapPreferences>,
+    );
+    this.preferences = { ...DEFAULTS, ...stored };
     this.codex.setConfiguredPath(this.preferences.codexExecutablePath);
     if (this.preferences.workspacePath) {
       try {

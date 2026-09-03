@@ -1,0 +1,10 @@
+name: lg-report-agent
+paths:
+  - src
+  - scripts
+paths-ignore:
+  - node_modules
+  - out
+  - release
+  - artifacts
+  - tests

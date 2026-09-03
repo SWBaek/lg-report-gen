@@ -181,9 +181,7 @@ function MissingNotice() {
       ))}
       <button
         className="button"
-        onClick={() =>
-          void window.lgReportAgent.system.openExternal('https://developers.openai.com/codex/cli')
-        }
+        onClick={() => void window.lgReportAgent.system.openExternal('codexCliDocs')}
       >
         공식 안내 열기
       </button>
