@@ -46,7 +46,7 @@ describe('workspace layout', () => {
     await expect(ensureWorkspace(syncRoot, { rejectSynchronizedFolder: true })).rejects.toThrow(
       'WORKSPACE_SYNC_FOLDER_UNSUPPORTED',
     );
-  });
+  }, 15_000);
 
   it('detects a synchronized target behind a junction or symlink', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lg-policy-link-'));

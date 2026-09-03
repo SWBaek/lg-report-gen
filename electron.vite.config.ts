@@ -22,7 +22,10 @@ const mainRuntimeAssetsPlugin: Plugin = {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), mainRuntimeAssetsPlugin],
+    // htmlparser2 is used while reconstructing the canonical editor document.
+    // Bundle it into the Main entry so packaged ASAR startup does not depend on
+    // resolving its ESM package graph through Electron's external loader.
+    plugins: [externalizeDepsPlugin({ exclude: ['htmlparser2'] }), mainRuntimeAssetsPlugin],
     build: {
       rollupOptions: {
         input: {
